@@ -1,0 +1,29 @@
+-- Create database
+CREATE DATABASE IF NOT EXISTS reimbursement_db;
+USE reimbursement_db;
+
+-- Create lists table
+CREATE TABLE IF NOT EXISTS lists (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  total DECIMAL(15, 2) DEFAULT 0.00,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Create entries table
+CREATE TABLE IF NOT EXISTS entries (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  list_id INT NOT NULL,
+  date DATE NOT NULL,
+  category VARCHAR(255) NOT NULL,
+  note TEXT,
+  amount DECIMAL(15, 2) NOT NULL,
+  proof_image VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+  INDEX idx_list_id (list_id),
+  INDEX idx_date (date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
