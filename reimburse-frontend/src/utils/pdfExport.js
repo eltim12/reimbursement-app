@@ -34,9 +34,9 @@ async function convertImageToDataURL(imageUrl) {
     // Handle relative URLs from backend
     let fullUrl = imageUrl
     if (imageUrl.startsWith('/images/')) {
-      fullUrl = `http://localhost:3000${imageUrl}`
+      fullUrl = `https://reimburse-api.trimind.studio${imageUrl}`
     } else if (!imageUrl.startsWith('http')) {
-      fullUrl = `http://localhost:3000/${imageUrl}`
+      fullUrl = `https://reimburse-api.trimind.studio/${imageUrl}`
     }
 
     const response = await fetch(fullUrl)

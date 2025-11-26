@@ -3,9 +3,33 @@
     <v-row justify="center" class="ma-0">
       <v-col cols="12" md="11" lg="10" class="pa-1 pa-md-3">
         <v-card class="pa-3 pa-md-4 admin-card">
-          <v-card-title class="text-h4 mb-4 text-premium">
-            💸 Reimbursement Tracker
+          <v-card-title class="text-h4 mb-2 text-premium">
+            💸 {{ t('appTitle') }}
           </v-card-title>
+          
+          <!-- Language Switcher -->
+          <div class="mb-4 d-flex justify-center">
+            <v-btn-toggle
+              v-model="locale"
+              mandatory
+              variant="outlined"
+              density="compact"
+              class="language-switcher"
+            >
+              <v-btn value="en" size="small" class="language-btn">
+                <span class="d-flex align-center language-btn-content">
+                  <span class="flag-emoji">🇺🇸</span>
+                  <span class="d-none d-sm-inline language-text">English</span>
+                </span>
+              </v-btn>
+              <v-btn value="zh" size="small" class="language-btn">
+                <span class="d-flex align-center language-btn-content">
+                  <span class="flag-emoji">🇨🇳</span>
+                  <span class="d-none d-sm-inline language-text">中文</span>
+                </span>
+              </v-btn>
+            </v-btn-toggle>
+          </div>
 
           <!-- List Management View -->
           <div v-if="currentView === 'list'">
@@ -13,7 +37,7 @@
               <v-col cols="12" md="4">
                 <v-text-field
                   v-model="newListName"
-                  label="New list name"
+                  :label="t('newListName')"
                   variant="outlined"
                   density="compact"
                 ></v-text-field>
@@ -24,18 +48,20 @@
                   @click="createList"
                   :loading="loading"
                 >
-                  📝 Create New List
+                  {{ t('createNewList') }}
                 </v-btn>
-                <v-select
+                <v-autocomplete
                   v-model="selectedListId"
                   :items="lists"
                   item-title="displayName"
                   item-value="id"
-                  label="Select a list..."
+                  :label="t('selectList')"
                   variant="outlined"
                   density="compact"
                   style="max-width: 300px;"
-                ></v-select>
+                  clearable
+                  hide-no-data
+                ></v-autocomplete>
                 <v-btn
                   color="primary"
                   variant="outlined"
@@ -43,7 +69,7 @@
                   :disabled="!selectedListId"
                   :loading="loading"
                 >
-                  📂 Load List
+                  {{ t('loadList') }}
                 </v-btn>
                 <v-btn
                   color="error"
@@ -52,7 +78,7 @@
                   :disabled="!selectedListId"
                   :loading="loading"
                 >
-                  🗑️ Delete List
+                  {{ t('deleteList') }}
                 </v-btn>
               </v-col>
             </v-row>
@@ -61,7 +87,7 @@
               type="info"
               class="mb-4"
             >
-              Current List: <strong>{{ currentListName }}</strong>
+              {{ t('currentList') }}: <strong>{{ currentListName }}</strong>
             </v-alert>
           </div>
 
@@ -73,7 +99,7 @@
               class="mb-4"
               @click="switchView('list')"
             >
-              ← Back to Lists
+              {{ t('backToLists') }}
             </v-btn>
 
             <v-alert
@@ -81,19 +107,19 @@
               type="info"
               class="mb-4"
             >
-              Current List: <strong>{{ currentListName }}</strong>
+              {{ t('currentList') }}: <strong>{{ currentListName }}</strong>
             </v-alert>
 
             <!-- Entry Form -->
             <div class="mb-6">
-              <h3 class="text-h6 mb-4 text-premium">Add New Entry</h3>
+              <h3 class="text-h6 mb-4 text-premium">{{ t('addNewEntry') }}</h3>
               <v-form @submit.prevent="addEntry">
                 <v-row>
                   <v-col cols="12" md="3">
                     <v-text-field
                       v-model="entryForm.date"
                       type="date"
-                      label="Date"
+                      :label="t('date')"
                       variant="outlined"
                       required
                     ></v-text-field>
@@ -101,8 +127,8 @@
                   <v-col cols="12" md="3">
                     <v-text-field
                       v-model="entryForm.category"
-                      label="Category"
-                      placeholder="e.g. Transport, Meals"
+                      :label="t('category')"
+                      :placeholder="t('categoryPlaceholder')"
                       variant="outlined"
                       required
                     ></v-text-field>
@@ -110,15 +136,15 @@
                   <v-col cols="12" md="3">
                     <v-text-field
                       v-model="entryForm.note"
-                      label="Note"
-                      placeholder="Optional"
+                      :label="t('note')"
+                      :placeholder="t('notePlaceholder')"
                       variant="outlined"
                     ></v-text-field>
                   </v-col>
                   <v-col cols="12" md="3">
                     <v-text-field
                       v-model="entryForm.amount"
-                      label="Amount (IDR)"
+                      :label="t('amount')"
                       variant="outlined"
                       required
                       @input="formatAmountInput"
@@ -129,7 +155,7 @@
                       v-model="entryForm.proof"
                       :multiple="false"
                       :max-size="10 * 1024 * 1024"
-                      hint="Select one image file (max 10MB)"
+                      :hint="t('selectImage')"
                       accept="image/*"
                       :show-existing="false"
                       @file-added="handleImageAdded"
@@ -142,7 +168,7 @@
                       :loading="saving"
                       block
                     >
-                      ＋ Add Entry
+                      {{ t('addEntry') }}
                     </v-btn>
                   </v-col>
                 </v-row>
@@ -153,17 +179,17 @@
 
             <!-- Entries Table -->
             <div>
-              <h3 class="text-h6 mb-4 text-premium">Entries</h3>
+              <h3 class="text-h6 mb-4 text-premium">{{ t('entries') }}</h3>
               <div class="table-wrapper">
                 <v-table>
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Category</th>
-                      <th>Note</th>
-                      <th>Amount</th>
-                      <th>Proof</th>
-                      <th>Action</th>
+                      <th>{{ t('tableDate') }}</th>
+                      <th>{{ t('tableCategory') }}</th>
+                      <th>{{ t('tableNote') }}</th>
+                      <th>{{ t('tableAmount') }}</th>
+                      <th>{{ t('tableProof') }}</th>
+                      <th>{{ t('tableAction') }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -183,7 +209,7 @@
                         >
                           <template v-slot:error>
                             <div class="text-caption text-center pa-2">
-                              Image unavailable
+                              {{ t('imageUnavailable') }}
                             </div>
                           </template>
                         </v-img>
@@ -206,7 +232,7 @@
 
               <div class="text-right mb-4">
                 <h3 class="text-h6 text-premium">
-                  Total: {{ formatIDR(total) }}
+                  {{ t('total') }}: {{ formatIDR(total) }}
                 </h3>
               </div>
 
@@ -218,7 +244,7 @@
                     @click="handleExportPDFEnglish"
                     :loading="exporting"
                   >
-                    📄 Export PDF (English)
+                    {{ t('exportPDFEnglish') }}
                   </v-btn>
                 </v-col>
                 <v-col cols="12" md="6">
@@ -228,7 +254,7 @@
                     @click="handleExportPDFChinese"
                     :loading="exporting"
                   >
-                    📄 Export PDF (中文)
+                    {{ t('exportPDFChinese') }}
                   </v-btn>
                 </v-col>
               </v-row>
@@ -256,6 +282,14 @@ import api from '../services/api'
 // Image compression utilities no longer needed - backend handles it
 import { formatIDR, parseAmount } from '../utils/formatters'
 import { exportPDFEnglish, exportPDFChinese } from '../utils/pdfExport'
+import { translations } from '../utils/translations'
+
+// Language support
+const locale = ref('en')
+
+const t = (key) => {
+  return translations[locale.value]?.[key] || translations.en[key] || key
+}
 
 const currentView = ref('list')
 const loading = ref(false)
@@ -302,9 +336,13 @@ const getProofUrl = (proof) => {
   // Handle object format {url: '/images/...'}
   if (typeof proof === 'object' && proof !== null) {
     if (proof.url) {
-      // If it's a relative URL, the proxy will handle it
+      // If it's a relative URL, prepend the API base URL
       // If it's absolute, use it directly
-      return proof.url.startsWith('http') ? proof.url : proof.url
+      if (proof.url.startsWith('http')) {
+        return proof.url
+      } else {
+        return `https://reimburse-api.trimind.studio${proof.url}`
+      }
     }
     // Fallback to base64 if available (for old entries)
     return proof.base64 || null
@@ -315,8 +353,13 @@ const getProofUrl = (proof) => {
     if (proof.startsWith('data:image')) {
       return proof
     }
-    // Relative or absolute URL
-    return proof.startsWith('http') ? proof : proof
+    // If it's a relative URL, prepend the API base URL
+    // If it's absolute, use it directly
+    if (proof.startsWith('http')) {
+      return proof
+    } else {
+      return `https://reimburse-api.trimind.studio${proof}`
+    }
   }
   
   return null
@@ -338,7 +381,7 @@ const loadLists = async () => {
       }))
     }
   } catch (error) {
-    showSnackbar('Failed to load lists', 'error')
+    showSnackbar(t('failedToLoadLists'), 'error')
   } finally {
     loading.value = false
   }
@@ -346,7 +389,7 @@ const loadLists = async () => {
 
 const createList = async () => {
   if (!newListName.value.trim()) {
-    showSnackbar('Please enter a list name', 'error')
+    showSnackbar(t('pleaseEnterListName'), 'error')
     return
   }
 
@@ -361,10 +404,10 @@ const createList = async () => {
       newListName.value = ''
       switchView('form')
       await loadLists()
-      showSnackbar(`Created new list: ${currentListName.value}`)
+      showSnackbar(`${t('createdNewList')}: ${currentListName.value}`)
     }
   } catch (error) {
-    showSnackbar('Failed to create list', 'error')
+    showSnackbar(t('failedToCreateList'), 'error')
   } finally {
     loading.value = false
   }
@@ -372,7 +415,7 @@ const createList = async () => {
 
 const loadList = async () => {
   if (!selectedListId.value) {
-    showSnackbar('Please select a list to load', 'error')
+    showSnackbar(t('pleaseSelectList'), 'error')
     return
   }
 
@@ -386,10 +429,10 @@ const loadList = async () => {
       entries.value = list.entries || []
       total.value = list.total || 0
       switchView('form')
-      showSnackbar(`Loaded list: ${currentListName.value}`)
+      showSnackbar(`${t('loadedList')}: ${currentListName.value}`)
     }
   } catch (error) {
-    showSnackbar('Failed to load list', 'error')
+    showSnackbar(t('failedToLoadList'), 'error')
   } finally {
     loading.value = false
   }
@@ -397,11 +440,11 @@ const loadList = async () => {
 
 const deleteList = async () => {
   if (!selectedListId.value) {
-    showSnackbar('Please select a list to delete', 'error')
+    showSnackbar(t('pleaseSelectList'), 'error')
     return
   }
 
-  if (!confirm('Are you sure you want to delete this list? This action cannot be undone.')) {
+  if (!confirm(t('areYouSureDeleteList'))) {
     return
   }
 
@@ -418,10 +461,10 @@ const deleteList = async () => {
       }
       await loadLists()
       selectedListId.value = null
-      showSnackbar('List deleted successfully')
+      showSnackbar(t('listDeleted'))
     }
   } catch (error) {
-    showSnackbar('Failed to delete list', 'error')
+    showSnackbar(t('failedToDeleteList'), 'error')
   } finally {
     loading.value = false
   }
@@ -434,13 +477,13 @@ const handleImageAdded = (fileObj) => {
 
 const addEntry = async () => {
   if (!currentListId.value) {
-    showSnackbar('Please create or load a list first', 'error')
+    showSnackbar(t('pleaseCreateOrLoadList'), 'error')
     return
   }
 
   const amount = parseAmount(entryForm.value.amount)
   if (isNaN(amount) || amount <= 0) {
-    showSnackbar('Please enter a valid amount', 'error')
+    showSnackbar(t('pleaseEnterValidAmount'), 'error')
     return
   }
 
@@ -459,7 +502,7 @@ const addEntry = async () => {
         }
       } catch (error) {
         console.error('Image upload error:', error)
-        showSnackbar('Failed to upload image, entry will be saved without image', 'warning')
+        showSnackbar(t('failedToUploadImage'), 'warning')
       }
     }
 
@@ -492,10 +535,10 @@ const addEntry = async () => {
     // Force component to reset by clearing the file input
     // The UploadImage component will handle this via v-model
 
-    showSnackbar('Entry added successfully')
+    showSnackbar(t('entryAdded'))
   } catch (error) {
     console.error('Error adding entry:', error)
-    showSnackbar('Failed to add entry', 'error')
+    showSnackbar(t('failedToAddEntry'), 'error')
   } finally {
     saving.value = false
   }
@@ -503,7 +546,9 @@ const addEntry = async () => {
 
 const deleteEntry = async (index) => {
   const entry = entries.value[index]
-  if (!confirm(`Are you sure you want to delete this entry?\nDate: ${entry.Date}\nCategory: ${entry.Category}\nAmount: ${formatIDR(entry.Amount)}`)) {
+  const confirmMessage = `${t('areYouSureDeleteEntry')}\n${t('date')}: ${entry.Date}\n${t('category')}: ${entry.Category}\n${t('amount')}: ${formatIDR(entry.Amount)}`
+  
+  if (!confirm(confirmMessage)) {
     return
   }
 
@@ -525,10 +570,10 @@ const deleteEntry = async (index) => {
           total: total.value
         })
         
-        showSnackbar('Entry deleted successfully')
+        showSnackbar(t('entryDeleted'))
       } catch (error) {
         console.error('Error deleting entry from backend:', error)
-        showSnackbar('Failed to delete entry', 'error')
+        showSnackbar(t('failedToDeleteEntry'), 'error')
       }
     } else {
       // Entry doesn't have ID (newly added, not saved yet)
@@ -541,11 +586,11 @@ const deleteEntry = async (index) => {
         total: total.value
       })
 
-      showSnackbar('Entry deleted successfully')
+      showSnackbar(t('entryDeleted'))
     }
   } catch (error) {
     console.error('Error deleting entry:', error)
-    showSnackbar('Failed to delete entry', 'error')
+    showSnackbar(t('failedToDeleteEntry'), 'error')
   }
 }
 
@@ -553,9 +598,9 @@ const handleExportPDFEnglish = async () => {
   try {
     exporting.value = true
     await exportPDFEnglish(currentListName.value, entries.value, total.value)
-    showSnackbar('PDF exported successfully')
+    showSnackbar(t('pdfExported'))
   } catch (error) {
-    showSnackbar('Failed to export PDF', 'error')
+    showSnackbar(t('pdfExportFailed'), 'error')
   } finally {
     exporting.value = false
   }
@@ -565,9 +610,9 @@ const handleExportPDFChinese = async () => {
   try {
     exporting.value = true
     await exportPDFChinese(currentListName.value, entries.value, total.value)
-    showSnackbar('PDF导出成功！')
+    showSnackbar(t('pdfExported'))
   } catch (error) {
-    showSnackbar('PDF生成失败', 'error')
+    showSnackbar(t('pdfExportFailed'), 'error')
   } finally {
     exporting.value = false
   }
@@ -583,6 +628,35 @@ onMounted(() => {
   gap: var(--spacing-sm);
 }
 
+/* Language Switcher Styles */
+.language-switcher {
+  flex-wrap: nowrap;
+}
+
+.v-btn-group--density-compact.v-btn-group {
+    height: 100%;
+    overflow: visible;
+}
+
+.language-btn {
+  width: 100px;
+  padding: 8px 12px !important;
+  margin: 0 4px;
+}
+
+.language-btn-content {
+  gap: 6px;
+}
+
+.flag-emoji {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.language-text {
+  margin-left: 4px;
+}
+
 /* Mobile-specific adjustments */
 @media (max-width: 600px) {
   .v-card-title {
@@ -591,6 +665,19 @@ onMounted(() => {
   
   .v-card {
     padding: var(--spacing-md) !important;
+  }
+  
+  .language-switcher {
+    justify-content: center;
+  }
+  
+  .language-btn {
+    flex: 0 0 auto;
+    padding: 8px 16px !important;
+  }
+  
+  .language-btn span {
+    font-size: 1.2em;
   }
 }
 
