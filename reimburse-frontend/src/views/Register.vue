@@ -1,6 +1,13 @@
 <template>
   <v-container fluid class="fill-height justify-center pa-0">
-    <v-card class="pa-4 pa-sm-8" width="100%" max-width="400" elevation="8" rounded="xl" color="rgba(30, 41, 59, 0.95)">
+    <v-card
+      class="pa-4 pa-sm-8"
+      width="100%"
+      max-width="400"
+      elevation="8"
+      rounded="xl"
+      color="rgba(30, 41, 59, 0.95)"
+    >
       <div class="text-center mb-6">
         <!-- Language Switcher -->
         <div class="mb-4 d-flex justify-center">
@@ -25,8 +32,12 @@
             </v-btn>
           </v-btn-toggle>
         </div>
-        <h1 class="text-h4 font-weight-bold text-white mb-2">{{ t('createAccount') || 'Create Account' }}</h1>
-        <p class="text-medium-emphasis">{{ t('joinUsSubtitle') || 'Join us to track your reimbursements' }}</p>
+        <h1 class="text-h4 font-weight-bold text-white mb-2">
+          {{ t("createAccount") || "Create Account" }}
+        </h1>
+        <p class="text-medium-emphasis">
+          {{ t("joinUsSubtitle") || "Join us to track your reimbursements" }}
+        </p>
       </div>
 
       <v-form @submit.prevent="handleRegister" v-model="formValid">
@@ -36,7 +47,7 @@
           variant="outlined"
           color="primary"
           bg-color="rgba(255, 255, 255, 0.05)"
-          :rules="[v => !!v || (t('nameRequired') || 'Name is required')]"
+          :rules="[(v) => !!v || t('nameRequired') || 'Name is required']"
           prepend-inner-icon="mdi-account"
           class="mb-2"
         ></v-text-field>
@@ -47,7 +58,11 @@
           variant="outlined"
           color="primary"
           bg-color="rgba(255, 255, 255, 0.05)"
-          :rules="[v => !!v || (t('emailRequired') || 'Email is required'), v => /.+@.+\..+/.test(v) || (t('emailValid') || 'Email must be valid')]"
+          :rules="[
+            (v) => !!v || t('emailRequired') || 'Email is required',
+            (v) =>
+              /.+@.+\..+/.test(v) || t('emailValid') || 'Email must be valid',
+          ]"
           prepend-inner-icon="mdi-email"
           class="mb-2"
         ></v-text-field>
@@ -59,7 +74,11 @@
           variant="outlined"
           color="primary"
           bg-color="rgba(255, 255, 255, 0.05)"
-          :rules="[v => !!v || (t('passwordRequired') || 'Password is required'), v => v.length >= 6 || (t('passwordMinLength') || 'Min 6 characters')]"
+          :rules="[
+            (v) => !!v || t('passwordRequired') || 'Password is required',
+            (v) =>
+              v.length >= 6 || t('passwordMinLength') || 'Min 6 characters',
+          ]"
           prepend-inner-icon="mdi-lock"
           class="mb-2"
         ></v-text-field>
@@ -72,8 +91,14 @@
           color="primary"
           bg-color="rgba(255, 255, 255, 0.05)"
           :rules="[
-            v => !!v || (t('confirmPasswordRequired') || 'Confirm Password is required'),
-            v => v === password || (t('passwordsMismatch') || 'Passwords do not match')
+            (v) =>
+              !!v ||
+              t('confirmPasswordRequired') ||
+              'Confirm Password is required',
+            (v) =>
+              v === password ||
+              t('passwordsMismatch') ||
+              'Passwords do not match',
           ]"
           prepend-inner-icon="mdi-lock-check"
           class="mb-6"
@@ -88,18 +113,25 @@
           :loading="loading"
           :disabled="!formValid"
         >
-          {{ t('signUp') || 'Sign Up' }}
+          {{ t("signUp") || "Sign Up" }}
         </v-btn>
 
         <div class="text-center text-body-2 text-medium-emphasis">
-          {{ t('alreadyHaveAccount') || "Already have an account?" }}
-          <router-link to="/login" class="text-primary text-decoration-none font-weight-bold">
-            {{ t('signIn') || 'Sign In' }}
+          {{ t("alreadyHaveAccount") || "Already have an account?" }}
+          <router-link
+            to="/login"
+            class="text-primary text-decoration-none font-weight-bold"
+          >
+            {{ t("signIn") || "Sign In" }}
           </router-link>
         </div>
       </v-form>
 
-      <v-snackbar v-model="snackbar.show" :color="snackbar.color" location="top">
+      <v-snackbar
+        v-model="snackbar.show"
+        :color="snackbar.color"
+        location="top"
+      >
         {{ snackbar.message }}
       </v-snackbar>
     </v-card>
@@ -107,65 +139,81 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import api from '../services/api'
-import { translations } from '../utils/translations'
+import { ref, watch, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import api from "../services/api";
+import { translations } from "../utils/translations";
 
-const router = useRouter()
-const name = ref('')
-const email = ref('')
-const password = ref('')
-const confirmPassword = ref('')
-const loading = ref(false)
-const formValid = ref(false)
-const snackbar = ref({ show: false, message: '', color: 'error' })
-const locale = ref(localStorage.getItem('locale') || 'en')
+const router = useRouter();
+const name = ref("");
+const email = ref("");
+const password = ref("");
+const confirmPassword = ref("");
+const loading = ref(false);
+const formValid = ref(false);
+const snackbar = ref({ show: false, message: "", color: "error" });
+const locale = ref(localStorage.getItem("locale") || "en");
 
 watch(locale, (newVal) => {
-  localStorage.setItem('locale', newVal)
-})
+  localStorage.setItem("locale", newVal);
+});
 
 onMounted(() => {
   // Ensure we have a valid locale
-  if (!['en', 'zh'].includes(locale.value)) {
-    locale.value = 'en'
+  if (!["en", "zh"].includes(locale.value)) {
+    locale.value = "en";
   }
-})
+});
 
 const t = (key) => {
-  return translations[locale.value]?.[key] || translations.en[key] || key
-}
+  return translations[locale.value]?.[key] || translations.en[key] || key;
+};
 
 const handleRegister = async () => {
-  if (!formValid.value) return
+  if (!formValid.value) return;
 
-  loading.value = true
+  loading.value = true;
   try {
-    const response = await api.register(email.value, password.value, name.value)
+    const response = await api.register(
+      email.value,
+      password.value,
+      name.value
+    );
     if (response.success) {
-      snackbar.value = { show: true, message: 'Account created! Please login.', color: 'success' }
+      snackbar.value = {
+        show: true,
+        message: "Account created! Please login.",
+        color: "success",
+      };
       setTimeout(() => {
-        router.push('/login')
-      }, 1500)
+        router.push("/login");
+      }, 1500);
     }
   } catch (error) {
     snackbar.value = {
       show: true,
-      message: error.response?.data?.error || 'Registration failed',
-      color: 'error'
-    }
+      message: error.response?.data?.error || "Registration failed",
+      color: "error",
+    };
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 </script>
 
 <style scoped>
 .fill-height {
   min-height: 100vh;
-  background: radial-gradient(circle at top right, rgba(139, 92, 246, 0.1), transparent 40%),
-              radial-gradient(circle at bottom left, rgba(56, 189, 248, 0.1), transparent 40%);
+  background: radial-gradient(
+      circle at top right,
+      rgba(139, 92, 246, 0.1),
+      transparent 40%
+    ),
+    radial-gradient(
+      circle at bottom left,
+      rgba(56, 189, 248, 0.1),
+      transparent 40%
+    );
 }
 
 /* Language Switcher Styles - Matched with Home.vue */
@@ -175,8 +223,8 @@ const handleRegister = async () => {
 }
 
 .v-btn-group--density-compact.v-btn-group {
-    height: 100%;
-    overflow: visible;
+  height: 100%;
+  overflow: visible;
 }
 
 .language-btn {
@@ -203,14 +251,14 @@ const handleRegister = async () => {
   .language-switcher {
     justify-content: center;
   }
-  
+
   .language-btn {
     flex: 0 0 auto;
     padding: 8px 16px !important;
     /* Reset width for mobile if needed, or flex handles it */
-    width: auto !important; 
+    width: auto !important;
   }
-  
+
   .language-btn span {
     font-size: 1.2em;
   }
