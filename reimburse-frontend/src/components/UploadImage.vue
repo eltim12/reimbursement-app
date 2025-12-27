@@ -88,6 +88,7 @@
         class="file-item"
         :class="{
           'uploading': file.status === 'uploading',
+          'compressing': file.status === 'compressing',
           'complete': file.status === 'complete',
           'error': file.status === 'error'
         }"
@@ -115,6 +116,7 @@
           <div v-if="file.status === 'uploading'" class="progress-bar-container">
             <div class="progress-bar" :style="{ width: `${file.progress}%` }"></div>
           </div>
+          <div v-if="file.status === 'compressing'" class="compressing-message">Compressing...</div>
           <div v-if="file.status === 'error'" class="error-message">{{ file.errorMessage }}</div>
         </div>
         <div class="file-actions">
@@ -143,7 +145,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, reactive } from 'vue'
+import { compressImageToBlob } from '../utils/imageCompression'
 
 const props = defineProps({
   modelValue: {
@@ -219,11 +222,7 @@ function validateFile(file) {
     return { valid: false, error: 'File must be an image' }
   }
 
-  // Check file size
-  if (file.size > props.maxSize) {
-    return { valid: false, error: `File size exceeds ${formatFileSize(props.maxSize)}` }
-  }
-
+  // Size check removed as we now compress automatically
   return { valid: true }
 }
 
@@ -250,7 +249,7 @@ async function addFile(file) {
 
   const validation = validateFile(file)
   if (!validation.valid) {
-    fileList.value.push({
+    fileList.value.push(reactive({
       id: generateFileId(),
       name: file.name,
       size: file.size,
@@ -258,27 +257,66 @@ async function addFile(file) {
       status: 'error',
       errorMessage: validation.error,
       preview: null
-    })
+    }))
     updateModelValue()
     return
   }
 
-  const preview = await generatePreview(file)
-  const fileObj = {
+  // Create temporary entry
+  const fileObj = reactive({
     id: generateFileId(),
     name: file.name,
     size: file.size,
     file: file,
-    status: 'pending',
+    status: 'compressing', // Set initial status to compressing
     progress: 0,
-    preview: preview
-  }
-
+    preview: null
+  })
+  
+  // Add to list immediately to show in UI
   fileList.value.push(fileObj)
-  emit('file-added', fileObj)
 
-  // Update model value
-  updateModelValue()
+  // Generate preview
+  const preview = await generatePreview(file)
+  fileObj.preview = preview
+  
+  try {
+    // Compress image
+    // Calculate max size in MB
+    const maxSizeMB = props.maxSize / (1024 * 1024)
+    const compressedBlob = await compressImageToBlob(file, maxSizeMB)
+    
+    // Create new File object from compressed blob
+    // Replace extension with .jpg as compression converts to jpeg
+    const newName = file.name.replace(/\.[^/.]+$/, "") + ".jpg"
+    const compressedFile = new File([compressedBlob], newName, { 
+      type: 'image/jpeg',
+      lastModified: Date.now()
+    })
+    
+    // Update file object
+    fileObj.file = compressedFile
+    fileObj.size = compressedFile.size
+    fileObj.name = newName
+    fileObj.status = 'pending'
+    
+    emit('file-added', fileObj)
+    updateModelValue()
+    
+  } catch (error) {
+    console.error('Image compression failed:', error)
+    fileObj.status = 'error'
+    fileObj.errorMessage = 'Compression failed'
+    // Fallback? Or just keep error? 
+    // If compression fails, we probably shouldn't upload the huge file if it was explicitly huge.
+    // Use original file as fallback if it's within limits?
+    if (file.size <= props.maxSize) {
+        fileObj.status = 'pending'
+        fileObj.file = file
+        emit('file-added', fileObj)
+        updateModelValue()
+    }
+  }
 }
 
 // Remove file
@@ -302,11 +340,17 @@ function removeExistingImage(index) {
 function updateModelValue() {
   if (props.multiple) {
     const files = fileList.value
-      .filter(f => f.status !== 'error')
+      .filter(f => f.status !== 'error' && f.status !== 'compressing') // Wait for compression
       .map(f => f.file)
+      // Only emit if we have files valid and ready? 
+      // If compressing, we might wait, but emit empty or partial?
+      // Usually better to wait until ready to emit model update if strict?
+      // But user can click submit?
+      // If we filter out 'compressing', the modelValue won't have the file yet, 
+      // so 'required' validation on parent form will fail until compression done. This is GOOD.
     emit('update:modelValue', files.length > 0 ? files : null)
   } else {
-    const file = fileList.value.find(f => f.status !== 'error')
+    const file = fileList.value.find(f => f.status !== 'error' && f.status !== 'compressing')
     emit('update:modelValue', file ? file.file : null)
   }
 }
@@ -697,6 +741,20 @@ onUnmounted(() => {
   font-size: 12px;
   color: rgba(239, 68, 68, 0.9);
   margin-top: 4px;
+}
+
+.compressing-message {
+  font-size: 12px;
+  color: #8B5CF6;
+  margin-top: 4px;
+  font-weight: 500;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
 }
 
 /* File Actions */

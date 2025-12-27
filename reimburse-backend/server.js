@@ -6,11 +6,14 @@ const path = require('path');
 const fs = require('fs-extra');
 const db = require('./config/database');
 const { compressAndSaveImage, deleteImage } = require('./utils/imageCompression');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_should_be_in_env';
 
 // Ensure public/images directory exists
 const publicImagesDir = path.join(__dirname, 'public', 'images');
@@ -40,6 +43,20 @@ const upload = multer({
   },
 });
 
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ success: false, error: 'Access denied' });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ success: false, error: 'Invalid token' });
+    req.user = user;
+    next();
+  });
+};
+
 // Routes
 
 // Health check
@@ -47,11 +64,66 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Reimbursement API is running' });
 });
 
-// Get all lists
-app.get('/api/lists', async (req, res) => {
+// Auth Routes
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+
+    // Check if user exists
+    const [existing] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Email already registered' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [result] = await db.query(
+      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
+      [email, hashedPassword, name || '']
+    );
+
+    res.json({ success: true, message: 'User registered successfully' });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find user
+    const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    if (users.length === 0) {
+      return res.status(400).json({ success: false, error: 'Invalid email or password' });
+    }
+
+    const user = users[0];
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(400).json({ success: false, error: 'Invalid email or password' });
+    }
+
+    // Generate Token
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
+
+    res.json({ success: true, token, user: { id: user.id, email: user.email, name: user.name } });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get all lists (Protected)
+app.get('/api/lists', authenticateToken, async (req, res) => {
   try {
     const [lists] = await db.query(
-      'SELECT id, name, total, created_at, updated_at FROM lists ORDER BY created_at DESC'
+      'SELECT id, name, total, created_at, updated_at FROM lists WHERE user_id = ? ORDER BY created_at DESC',
+      [req.user.id]
     );
 
     const formattedLists = lists.map(list => ({
@@ -69,15 +141,15 @@ app.get('/api/lists', async (req, res) => {
   }
 });
 
-// Get a specific list with entries
-app.get('/api/lists/:id', async (req, res) => {
+// Get a specific list with entries (Protected)
+app.get('/api/lists/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get list
+    // Get list (ensure it belongs to user)
     const [lists] = await db.query(
-      'SELECT id, name, total, created_at, updated_at FROM lists WHERE id = ?',
-      [id]
+      'SELECT id, name, total, created_at, updated_at FROM lists WHERE id = ? AND user_id = ?',
+      [id, req.user.id]
     );
 
     if (lists.length === 0) {
@@ -93,7 +165,7 @@ app.get('/api/lists/:id', async (req, res) => {
     );
 
     const formattedEntries = entries.map(entry => ({
-      id: entry.id, // Include entry ID for deletion
+      id: entry.id,
       Date: entry.date.toISOString().split('T')[0],
       Category: entry.category,
       Note: entry.note || '',
@@ -118,8 +190,8 @@ app.get('/api/lists/:id', async (req, res) => {
   }
 });
 
-// Create a new list
-app.post('/api/lists', async (req, res) => {
+// Create a new list (Protected)
+app.post('/api/lists', authenticateToken, async (req, res) => {
   try {
     const { name } = req.body;
 
@@ -128,8 +200,8 @@ app.post('/api/lists', async (req, res) => {
     }
 
     const [result] = await db.query(
-      'INSERT INTO lists (name, total) VALUES (?, ?)',
-      [name.trim(), 0]
+      'INSERT INTO lists (user_id, name, total) VALUES (?, ?, ?)',
+      [req.user.id, name.trim(), 0]
     );
 
     res.json({
@@ -146,11 +218,15 @@ app.post('/api/lists', async (req, res) => {
   }
 });
 
-// Update a list
-app.put('/api/lists/:id', async (req, res) => {
+// Update a list (Protected)
+app.put('/api/lists/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, entries, total } = req.body;
+
+    // Verify ownership
+    const [lists] = await db.query('SELECT id FROM lists WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (lists.length === 0) return res.status(404).json({ success: false, error: 'List not found' });
 
     const connection = await db.getConnection();
     await connection.beginTransaction();
@@ -229,10 +305,14 @@ app.put('/api/lists/:id', async (req, res) => {
   }
 });
 
-// Delete a list
-app.delete('/api/lists/:id', async (req, res) => {
+// Delete a list (Protected)
+app.delete('/api/lists/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Verify ownership
+    const [lists] = await db.query('SELECT id FROM lists WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (lists.length === 0) return res.status(404).json({ success: false, error: 'List not found' });
 
     const connection = await db.getConnection();
     await connection.beginTransaction();

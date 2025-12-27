@@ -9,17 +9,22 @@
     "init-db": "node database/init.js",
     "verify-db": "node database/verify.js"
   },
-  "keywords": ["reimbursement", "api"],
+  "keywords": [
+    "reimbursement",
+    "api"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "mysql2": "^3.6.5",
+    "express": "^4.18.2",
+    "fs-extra": "^11.2.0",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^1.4.5-lts.1",
-    "sharp": "^0.33.1",
-    "fs-extra": "^11.2.0"
+    "mysql2": "^3.6.5",
+    "sharp": "^0.33.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
