@@ -94,7 +94,7 @@ app.post("/api/auth/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await db.query(
       "INSERT INTO users (email, password, name) VALUES (?, ?, ?)",
-      [email, hashedPassword, name || ""]
+      [email, hashedPassword, name || ""],
     );
 
     res.json({ success: true, message: "User registered successfully" });
@@ -145,7 +145,7 @@ app.get("/api/lists", authenticateToken, async (req, res) => {
   try {
     const [lists] = await db.query(
       "SELECT id, name, total, created_at, updated_at FROM lists WHERE user_id = ? ORDER BY created_at DESC",
-      [req.user.id]
+      [req.user.id],
     );
 
     const formattedLists = lists.map((list) => ({
@@ -171,7 +171,7 @@ app.get("/api/lists/:id", authenticateToken, async (req, res) => {
     // Get list (ensure it belongs to user)
     const [lists] = await db.query(
       "SELECT id, name, total, created_at, updated_at FROM lists WHERE id = ? AND user_id = ?",
-      [id, req.user.id]
+      [id, req.user.id],
     );
 
     if (lists.length === 0) {
@@ -183,7 +183,7 @@ app.get("/api/lists/:id", authenticateToken, async (req, res) => {
     // Get entries
     const [entries] = await db.query(
       "SELECT id, date, category, note, amount, proof_image, created_at FROM entries WHERE list_id = ? ORDER BY created_at ASC",
-      [id]
+      [id],
     );
 
     const formattedEntries = entries.map((entry) => ({
@@ -225,7 +225,7 @@ app.post("/api/lists", authenticateToken, async (req, res) => {
 
     const [result] = await db.query(
       "INSERT INTO lists (user_id, name, total) VALUES (?, ?, ?)",
-      [req.user.id, name.trim(), 0]
+      [req.user.id, name.trim(), 0],
     );
 
     res.json({
@@ -251,7 +251,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
     // Verify ownership
     const [lists] = await db.query(
       "SELECT id FROM lists WHERE id = ? AND user_id = ?",
-      [id, req.user.id]
+      [id, req.user.id],
     );
     if (lists.length === 0)
       return res.status(404).json({ success: false, error: "List not found" });
@@ -264,7 +264,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
       if (name !== undefined) {
         await connection.query(
           "UPDATE lists SET name = ?, updated_at = NOW() WHERE id = ?",
-          [name, id]
+          [name, id],
         );
       }
 
@@ -272,7 +272,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
       if (total !== undefined) {
         await connection.query(
           "UPDATE lists SET total = ?, updated_at = NOW() WHERE id = ?",
-          [total, id]
+          [total, id],
         );
       }
 
@@ -281,7 +281,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
         // Get existing entry images to delete
         const [existingEntries] = await connection.query(
           "SELECT proof_image FROM entries WHERE list_id = ? AND proof_image IS NOT NULL",
-          [id]
+          [id],
         );
 
         // Delete existing entries
@@ -289,7 +289,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
 
         // Delete old image files that are not in the new entries
         const newImageUrls = new Set(
-          entries.map((e) => e.Proof?.url).filter((url) => url)
+          entries.map((e) => e.Proof?.url).filter((url) => url),
         );
 
         for (const entry of existingEntries) {
@@ -312,7 +312,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
 
           await connection.query(
             "INSERT INTO entries (list_id, date, category, note, amount, proof_image) VALUES ?",
-            [values]
+            [values],
           );
         }
       }
@@ -339,7 +339,7 @@ app.delete("/api/lists/:id", authenticateToken, async (req, res) => {
     // Verify ownership
     const [lists] = await db.query(
       "SELECT id FROM lists WHERE id = ? AND user_id = ?",
-      [id, req.user.id]
+      [id, req.user.id],
     );
     if (lists.length === 0)
       return res.status(404).json({ success: false, error: "List not found" });
@@ -351,7 +351,7 @@ app.delete("/api/lists/:id", authenticateToken, async (req, res) => {
       // Get all entry images to delete
       const [entries] = await connection.query(
         "SELECT proof_image FROM entries WHERE list_id = ? AND proof_image IS NOT NULL",
-        [id]
+        [id],
       );
 
       // Delete entries (cascade will handle this, but we need images first)
@@ -397,7 +397,7 @@ app.post("/api/upload-image", upload.single("image"), async (req, res) => {
     // Compress and save image
     const result = await compressAndSaveImage(
       req.file.buffer,
-      req.file.originalname
+      req.file.originalname,
     );
 
     res.json({
@@ -420,7 +420,7 @@ app.delete("/api/entries/:id", async (req, res) => {
     // Get entry to find image
     const [entries] = await db.query(
       "SELECT proof_image FROM entries WHERE id = ?",
-      [id]
+      [id],
     );
 
     if (entries.length === 0) {
@@ -450,7 +450,7 @@ async function verifyDatabase() {
 
     if (!tableNames.includes("lists") || !tableNames.includes("entries")) {
       console.warn(
-        "⚠️  Warning: Database tables may not exist. Run: npm run init-db"
+        "⚠️  Warning: Database tables may not exist. Run: npm run init-db",
       );
     } else {
       console.log("✓ Database tables verified");
@@ -458,7 +458,7 @@ async function verifyDatabase() {
   } catch (error) {
     console.error("⚠️  Database verification failed:", error.message);
     console.error(
-      "   Please ensure the database is initialized: npm run init-db"
+      "   Please ensure the database is initialized: npm run init-db",
     );
   }
 }
@@ -468,7 +468,7 @@ app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(
-    `Images served from: ${path.join(__dirname, "public", "images")}`
+    `Images served from: ${path.join(__dirname, "public", "images")}`,
   );
   await verifyDatabase();
 });

@@ -35,8 +35,8 @@
             >
               <v-btn value="en" size="small" class="language-btn">
                 <span class="d-flex align-center language-btn-content">
-                  <span class="flag-emoji">🇺🇸</span>
-                  <span class="d-none d-sm-inline language-text">English</span>
+                  <span class="flag-emoji">🇮🇩</span>
+                  <span class="d-none d-sm-inline language-text">Bahasa</span>
                 </span>
               </v-btn>
               <v-btn value="zh" size="small" class="language-btn">
@@ -365,25 +365,15 @@
                 </h3>
               </div>
 
-              <v-row class="mt-4">
+              <v-row class="mt-4" justify="center">
                 <v-col cols="12" md="6">
                   <v-btn
                     class="btn-premium"
                     block
-                    @click="handleExportPDFEnglish"
+                    @click="handleExportPDF"
                     :loading="exporting"
                   >
-                    {{ t("exportPDFEnglish") }}
-                  </v-btn>
-                </v-col>
-                <v-col cols="12" md="6">
-                  <v-btn
-                    class="btn-premium"
-                    block
-                    @click="handleExportPDFChinese"
-                    :loading="exporting"
-                  >
-                    {{ t("exportPDFChinese") }}
+                    {{ t("exportPDF") }}
                   </v-btn>
                 </v-col>
               </v-row>
@@ -415,7 +405,7 @@ import {
   parseCurrencyAmount,
   formatIDR,
 } from "../utils/formatters";
-import { exportPDFEnglish, exportPDFChinese } from "../utils/pdfExport";
+import { exportPDF } from "../utils/pdfExport";
 import { translations } from "../utils/translations";
 
 const router = useRouter();
@@ -613,7 +603,7 @@ const loadLists = async () => {
           name: list.name,
           createdAt: list.createdAt,
           displayName: `${list.name} (${new Date(
-            list.createdAt
+            list.createdAt,
           ).toLocaleDateString()})`,
         }))
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -723,7 +713,7 @@ const addEntry = async () => {
 
   const amount = parseCurrencyAmount(
     entryForm.value.amount,
-    entryForm.value.currency
+    entryForm.value.currency,
   );
   if (isNaN(amount) || amount <= 0) {
     showSnackbar(t("pleaseEnterValidAmount"), "error");
@@ -805,7 +795,7 @@ const deleteEntry = async (index) => {
     entry.Date
   }\n${t("category")}: ${entry.Category}\n${t("amount")}: ${formatCurrency(
     entry.Amount,
-    entryCurrency
+    entryCurrency,
   )}`;
 
   if (!confirm(confirmMessage)) {
@@ -854,35 +844,16 @@ const deleteEntry = async (index) => {
   }
 };
 
-const handleExportPDFEnglish = async () => {
+const handleExportPDF = async () => {
   try {
     exporting.value = true;
     const user = JSON.parse(localStorage.getItem("user") || "{}");
     const userName = user.name || "";
-    await exportPDFEnglish(
+    await exportPDF(
       currentListName.value,
       entries.value,
       total.value,
-      userName
-    );
-    showSnackbar(t("pdfExported"));
-  } catch (error) {
-    showSnackbar(t("pdfExportFailed"), "error");
-  } finally {
-    exporting.value = false;
-  }
-};
-
-const handleExportPDFChinese = async () => {
-  try {
-    exporting.value = true;
-    const user = JSON.parse(localStorage.getItem("user") || "{}");
-    const userName = user.name || "";
-    await exportPDFChinese(
-      currentListName.value,
-      entries.value,
-      total.value,
-      userName
+      userName,
     );
     showSnackbar(t("pdfExported"));
   } catch (error) {
