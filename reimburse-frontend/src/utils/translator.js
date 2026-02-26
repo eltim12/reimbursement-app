@@ -30,11 +30,11 @@ export async function translateText(text) {
 
     if (!translated) return text; // fallback
 
-    // Result formatting: <indonesian> <chinese>
+    // Result formatting: <indonesian>\n<chinese>
     if (isChinese) {
-      return `${translated.toLowerCase()} ${text}`;
+      return `${translated.toLowerCase()}\n${text}`;
     } else {
-      return `${text.toLowerCase()} ${translated}`;
+      return `${text.toLowerCase()}\n${translated}`;
     }
   } catch (error) {
     console.error("Translation failed:", error);
