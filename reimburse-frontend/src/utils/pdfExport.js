@@ -116,7 +116,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
                 proofImage = {
                   image: dataUrl,
                   width: 110,
-                  height: 220,
+                  height: 215,
                   alignment: "center",
                 };
               }
