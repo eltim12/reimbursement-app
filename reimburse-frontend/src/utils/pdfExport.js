@@ -233,10 +233,12 @@ export async function exportPDF(listName, entries, total, userName = "") {
             {
               text: `总计 (${currency}): ${formatCurrency(amount, currency)}`,
               style: "totalZh",
+              alignment: "center",
             },
             {
               text: `Total (${currency}): ${formatCurrency(amount, currency)}`,
               style: "totalId",
+              alignment: "center",
             },
           ],
           margin: [0, 6, 0, 0],
