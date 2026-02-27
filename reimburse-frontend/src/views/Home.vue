@@ -302,6 +302,7 @@
                 <v-table>
                   <thead>
                     <tr>
+                      <th>{{ t("tableNo") }}</th>
                       <th>{{ t("tableDate") }}</th>
                       <th>{{ t("tableCategory") }}</th>
                       <th>{{ t("tableNote") }}</th>
@@ -312,6 +313,7 @@
                   </thead>
                   <tbody>
                     <tr v-for="(entry, idx) in entries" :key="idx">
+                      <td>{{ idx + 1 }}</td>
                       <td>{{ entry.Date }}</td>
                       <td>{{ entry.Category }}</td>
                       <td>{{ entry.Note || "-" }}</td>
@@ -556,6 +558,10 @@ const handleCurrencyChange = () => {
 const getProofUrl = (proof) => {
   if (!proof) return null;
 
+  const baseUrl = import.meta.env.VITE_API_BASE_URL
+    ? import.meta.env.VITE_API_BASE_URL.replace(/\/api\/?$/, "")
+    : "https://reimburse-api.trimind.studio";
+
   // Handle object format {url: '/images/...'}
   if (typeof proof === "object" && proof !== null) {
     if (proof.url) {
@@ -564,7 +570,7 @@ const getProofUrl = (proof) => {
       if (proof.url.startsWith("http")) {
         return proof.url;
       } else {
-        return `https://reimburse-api.trimind.studio${proof.url}`;
+        return `${baseUrl}${proof.url.startsWith("/") ? proof.url : "/" + proof.url}`;
       }
     }
     // Fallback to base64 if available (for old entries)
@@ -581,7 +587,7 @@ const getProofUrl = (proof) => {
     if (proof.startsWith("http")) {
       return proof;
     } else {
-      return `https://reimburse-api.trimind.studio${proof}`;
+      return `${baseUrl}${proof.startsWith("/") ? proof : "/" + proof}`;
     }
   }
 

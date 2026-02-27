@@ -37,12 +37,16 @@ async function convertImageToDataURL(imageUrl) {
   }
 
   try {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL
+      ? import.meta.env.VITE_API_BASE_URL.replace(/\/api\/?$/, "")
+      : "https://reimburse-api.trimind.studio";
+
     // Handle relative URLs from backend
     let fullUrl = imageUrl;
     if (imageUrl.startsWith("/images/")) {
-      fullUrl = `https://reimburse-api.trimind.studio${imageUrl}`;
+      fullUrl = `${baseUrl}${imageUrl}`;
     } else if (!imageUrl.startsWith("http")) {
-      fullUrl = `https://reimburse-api.trimind.studio/${imageUrl}`;
+      fullUrl = `${baseUrl}/${imageUrl}`;
     }
 
     const response = await fetch(fullUrl);
@@ -80,10 +84,10 @@ function sanitizeFileName(name) {
 function biCell(zh, en, opts = {}) {
   return {
     stack: [
-      { text: zh, fontSize: opts.fontSize || 9, bold: opts.bold || false },
+      { text: zh, fontSize: opts.fontSize || 8, bold: opts.bold || false },
       {
         text: en,
-        fontSize: (opts.fontSize || 9) - 1,
+        fontSize: opts.fontSize || 8,
         color: "#555555",
         bold: false,
       },
@@ -115,8 +119,8 @@ export async function exportPDF(listName, entries, total, userName = "") {
               if (dataUrl) {
                 proofImage = {
                   image: dataUrl,
-                  width: 110,
-                  height: 215,
+                  width: 140,
+                  height: 250,
                   alignment: "center",
                 };
               }
@@ -161,19 +165,16 @@ export async function exportPDF(listName, entries, total, userName = "") {
     const docDefinition = {
       defaultStyle: {
         font: "NotoSansSC",
+        fontSize: 8,
+        bold: true,
       },
-      pageMargins: [20, 60, 20, 40],
+      pageMargins: [5, 5, 5, 5],
       header: {
         stack: [
           {
             text: `报销汇总 / Ringkasan Reimbursement`,
             style: "headerZh",
             margin: [0, 10, 0, 2],
-          },
-          {
-            text: listName || "未命名 / Tidak Bernama",
-            style: "headerSub",
-            margin: [0, 0, 0, 0],
           },
         ],
         margin: [20, 0, 20, 0],
@@ -184,45 +185,41 @@ export async function exportPDF(listName, entries, total, userName = "") {
             {
               stack: [
                 {
-                  text: `Tanggal: ${new Date().toLocaleDateString("zh-CN")}`,
-                  fontSize: 9,
-                },
-                {
-                  text: `Dibuat: ${new Date().toLocaleDateString()}`,
+                  text: `申请日期 Tanggal: ${new Date().toLocaleDateString()}`,
                   fontSize: 8,
-                  color: "#555555",
                 },
               ],
               alignment: "left",
             },
+            {
+              stack: [
+                {
+                  text: listName || "未命名 / Tidak Bernama",
+                  fontSize: 8,
+                  color: "#0bbeffff",
+                  bold: true,
+                },
+              ],
+              alignment: "center",
+            },
             userName
               ? {
-                  stack: [
-                    { text: `姓名: ${userName}`, fontSize: 9 },
-                    {
-                      text: `Nama: ${userName}`,
-                      fontSize: 8,
-                      color: "#555555",
-                    },
-                  ],
+                  stack: [{ text: `姓名 Nama: ${userName}`, fontSize: 9 }],
                   alignment: "right",
                 }
               : { text: "" },
           ],
-          margin: [0, 0, 0, 8],
+          margin: [20, 0, 20, 10],
         },
         {
           table: {
             headerRows: 1,
-            widths: [20, 63, 70, 145, 90, 120],
+            // widths: [20, 63, 70, 142, 85, 120],
+            widths: [18, 50, 60, 135, 75, 150],
             heights: 30,
             body: [headerRow, ...rows],
           },
           layout: "lightHorizontalLines",
-        },
-        {
-          text: "",
-          margin: [0, 20],
         },
         // Totals — bilingual
         ...Object.entries(
@@ -247,23 +244,23 @@ export async function exportPDF(listName, entries, total, userName = "") {
       ],
       styles: {
         headerZh: {
-          fontSize: 15,
+          fontSize: 10,
           bold: true,
           color: "#00bcd4",
           alignment: "center",
         },
         headerSub: {
-          fontSize: 11,
+          fontSize: 10,
           color: "#444444",
           alignment: "center",
         },
         totalZh: {
-          fontSize: 13,
+          fontSize: 10,
           bold: true,
           alignment: "right",
         },
         totalId: {
-          fontSize: 11,
+          fontSize: 10,
           color: "#555555",
           alignment: "right",
         },
