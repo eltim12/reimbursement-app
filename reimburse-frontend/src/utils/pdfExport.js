@@ -99,7 +99,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
 
     // Convert all images to data URLs
     const rows = await Promise.all(
-      entries.map(async (item) => {
+      entries.map(async (item, index) => {
         let proofImage = "-";
         if (item.Proof) {
           try {
@@ -138,6 +138,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
         ]);
 
         return [
+          (index + 1).toString(),
           item.Date,
           translatedCategory,
           translatedNote,
@@ -149,6 +150,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
 
     // Bilingual header row
     const headerRow = [
+      biCell("序号", "No.", { bold: true }),
       biCell("日期", "Tanggal", { bold: true }),
       biCell("类别", "Kategori", { bold: true }),
       biCell("备注", "Catatan", { bold: true }),
@@ -212,7 +214,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
         {
           table: {
             headerRows: 1,
-            widths: [70, 70, 150, 90, 120],
+            widths: [20, 63, 70, 145, 90, 120],
             heights: 30,
             body: [headerRow, ...rows],
           },
