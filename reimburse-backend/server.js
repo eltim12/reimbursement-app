@@ -140,6 +140,33 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// Update user name (Protected)
+app.put("/api/users/name", authenticateToken, async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Name is required" });
+    }
+
+    await db.query("UPDATE users SET name = ? WHERE id = ?", [
+      name.trim(),
+      req.user.id,
+    ]);
+
+    res.json({
+      success: true,
+      message: "Name updated successfully",
+      name: name.trim(),
+    });
+  } catch (error) {
+    console.error("Error updating user name:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get all lists (Protected)
 app.get("/api/lists", authenticateToken, async (req, res) => {
   try {

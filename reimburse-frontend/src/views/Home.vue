@@ -382,6 +382,43 @@
             </div>
           </div>
 
+          <!-- Name filling dialog for PDF export -->
+          <v-dialog v-model="showNameModal" max-width="400" persistent>
+            <v-card class="glass-card">
+              <v-card-title class="text-h6 pa-4">
+                {{ t("fillNameTitle") }}
+              </v-card-title>
+              <v-card-text class="pa-4 pt-0">
+                <v-text-field
+                  v-model="newUserName"
+                  :placeholder="t('fillNamePlaceholder')"
+                  :rules="[(v) => !!v || t('nameRequired')]"
+                  variant="outlined"
+                  required
+                ></v-text-field>
+              </v-card-text>
+              <v-card-actions class="pa-4 pt-0">
+                <v-spacer></v-spacer>
+                <v-btn
+                  color="grey"
+                  variant="text"
+                  @click="showNameModal = false"
+                >
+                  取消 / Batal
+                </v-btn>
+                <v-btn
+                  color="primary"
+                  variant="elevated"
+                  :loading="savingName"
+                  :disabled="!newUserName.trim()"
+                  @click="submitNameAndExport"
+                >
+                  {{ t("saveName") }}
+                </v-btn>
+              </v-card-actions>
+            </v-card>
+          </v-dialog>
+
           <!-- Snackbar for notifications -->
           <v-snackbar
             v-model="snackbar.show"
@@ -433,6 +470,9 @@ const currentView = ref("list");
 const loading = ref(false);
 const saving = ref(false);
 const exporting = ref(false);
+const showNameModal = ref(false);
+const newUserName = ref("");
+const savingName = ref(false);
 const lists = ref([]);
 const selectedListId = ref(null);
 const currentListId = ref(null);
@@ -851,10 +891,43 @@ const deleteEntry = async (index) => {
 };
 
 const handleExportPDF = async () => {
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const userName = user.name || "";
+
+  if (!userName.trim()) {
+    showNameModal.value = true;
+    return;
+  }
+
+  await executeExport(userName);
+};
+
+const submitNameAndExport = async () => {
+  if (!newUserName.value.trim()) return;
+
+  savingName.value = true;
+  try {
+    const response = await api.updateUserName(newUserName.value.trim());
+    if (response.success) {
+      // Update local storage
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      user.name = response.name;
+      localStorage.setItem("user", JSON.stringify(user));
+
+      showNameModal.value = false;
+      await executeExport(response.name);
+    }
+  } catch (err) {
+    console.error("Error updating name:", err);
+    showSnackbar("Failed to update name", "error");
+  } finally {
+    savingName.value = false;
+  }
+};
+
+const executeExport = async (userName) => {
   try {
     exporting.value = true;
-    const user = JSON.parse(localStorage.getItem("user") || "{}");
-    const userName = user.name || "";
     await exportPDF(
       currentListName.value,
       entries.value,

@@ -83,4 +83,10 @@ export default {
     const response = await api.delete(`/entries/${id}`);
     return response.data;
   },
+
+  // Update User Name
+  async updateUserName(name) {
+    const response = await api.put("/users/name", { name });
+    return response.data;
+  },
 };

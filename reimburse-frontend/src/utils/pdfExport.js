@@ -195,8 +195,8 @@ export async function exportPDF(listName, entries, total, userName = "") {
               stack: [
                 {
                   text: listName || "未命名 / Tidak Bernama",
-                  fontSize: 8,
-                  color: "#0bbeffff",
+                  fontSize: 10,
+                  color: "#00bcd4",
                   bold: true,
                 },
               ],
