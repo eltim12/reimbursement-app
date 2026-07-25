@@ -11,6 +11,7 @@ import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
+import Combobox from "@/components/ui/Combobox.vue";
 import Select from "@/components/ui/Select.vue";
 import SelectContent from "@/components/ui/SelectContent.vue";
 import SelectGroup from "@/components/ui/SelectGroup.vue";
@@ -20,6 +21,7 @@ import SelectValue from "@/components/ui/SelectValue.vue";
 import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
+import { CATEGORIES, isKnownCategory } from "@/utils/categories";
 import {
   formatCurrency,
   parseCurrencyAmount,
@@ -29,7 +31,7 @@ import { exportPDF } from "@/utils/pdfExport";
 
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { showToast } = useToast();
 
 const currentUser = computed(() => {
@@ -45,6 +47,15 @@ const currencyItems = computed(() => [
   { label: "IDR", value: "IDR" },
   { label: "RMB", value: "RMB" },
 ]);
+
+const categoryItems = computed(() =>
+  CATEGORIES.map((c) => ({
+    value: c.value,
+    label: locale.value === "zh" ? `${c.zh} / ${c.id}` : `${c.id} / ${c.zh}`,
+    id: c.id,
+    zh: c.zh,
+  })),
+);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -187,7 +198,12 @@ const addEntry = async () => {
   }
 
   if (!entryForm.value.category?.trim()) {
-    showToast(t("categoryPlaceholder"), "error");
+    showToast(t("pleaseSelectCategory"), "error");
+    return;
+  }
+
+  if (!isKnownCategory(entryForm.value.category)) {
+    showToast(t("pleaseSelectCategory"), "error");
     return;
   }
 
@@ -609,12 +625,13 @@ onMounted(() => loadList(route.params.id));
             />
           </div>
           <div class="space-y-2 sm:col-span-2">
-            <Label for="category">{{ t("category") }}</Label>
-            <Input
-              id="category"
+            <Label>{{ t("category") }}</Label>
+            <Combobox
               v-model="entryForm.category"
-              :placeholder="t('categoryPlaceholder')"
-              required
+              :items="categoryItems"
+              :placeholder="t('selectCategory')"
+              :search-placeholder="t('searchCategory')"
+              :empty-text="t('noCategoryResults')"
             />
           </div>
           <div class="space-y-2 sm:col-span-2">

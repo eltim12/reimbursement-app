@@ -80,17 +80,26 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+const ALLOWED_ROLES = ["user", "admin", "management", "finance"];
+const isManagement = (user) => user?.role === "management";
+const isFinance = (user) => user?.role === "finance";
+const canViewAllLists = (user) => isManagement(user) || isFinance(user);
+
 const requireManagement = (req, res, next) => {
-  if (req.user?.role !== "management") {
+  if (!isManagement(req.user)) {
     return res.status(403).json({ success: false, error: "Management access required" });
   }
   next();
 };
 
-const ALLOWED_ROLES = ["user", "admin", "management", "finance"];
-const isManagement = (user) => user?.role === "management";
-const isFinance = (user) => user?.role === "finance";
-const canViewAllLists = (user) => isManagement(user) || isFinance(user);
+const requireAnalyticsAccess = (req, res, next) => {
+  if (!canViewAllLists(req.user)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Analytics access required" });
+  }
+  next();
+};
 
 // Routes
 
@@ -176,6 +185,128 @@ app.post("/api/auth/login", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Analytics for management + finance
+app.get(
+  "/api/analytics",
+  authenticateToken,
+  requireAnalyticsAccess,
+  async (req, res) => {
+    try {
+      const { category, dateFrom, dateTo, ownerId } = req.query;
+
+      const where = [];
+      const params = [];
+
+      if (category) {
+        where.push("e.category = ?");
+        params.push(category);
+      }
+      if (dateFrom) {
+        where.push("e.date >= ?");
+        params.push(dateFrom);
+      }
+      if (dateTo) {
+        where.push("e.date <= ?");
+        params.push(dateTo);
+      }
+      if (ownerId) {
+        where.push("l.user_id = ?");
+        params.push(Number(ownerId));
+      }
+
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+      const [summaryRows] = await db.query(
+        `SELECT
+           COALESCE(SUM(e.amount), 0) AS total_amount,
+           COUNT(e.id) AS entry_count,
+           COUNT(DISTINCT e.list_id) AS list_count
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         ${whereSql}`,
+        params,
+      );
+
+      const [byCategory] = await db.query(
+        `SELECT
+           e.category AS category,
+           COALESCE(SUM(e.amount), 0) AS total_amount,
+           COUNT(e.id) AS entry_count
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         ${whereSql}
+         GROUP BY e.category
+         ORDER BY total_amount DESC, e.category ASC`,
+        params,
+      );
+
+      const [entries] = await db.query(
+        `SELECT
+           e.id,
+           e.date,
+           e.category,
+           e.note,
+           e.amount,
+           e.list_id,
+           l.name AS list_name,
+           u.id AS owner_id,
+           u.name AS owner_name,
+           u.email AS owner_email
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         LEFT JOIN users u ON u.id = l.user_id
+         ${whereSql}
+         ORDER BY e.date DESC, e.id DESC
+         LIMIT 500`,
+        params,
+      );
+
+      const [owners] = await db.query(
+        `SELECT DISTINCT u.id, u.name, u.email
+         FROM users u
+         INNER JOIN lists l ON l.user_id = u.id
+         ORDER BY u.name ASC, u.email ASC`,
+      );
+
+      const summary = summaryRows[0] || {};
+
+      res.json({
+        success: true,
+        summary: {
+          totalAmount: parseFloat(summary.total_amount) || 0,
+          entryCount: Number(summary.entry_count) || 0,
+          listCount: Number(summary.list_count) || 0,
+        },
+        byCategory: byCategory.map((row) => ({
+          category: row.category || "(empty)",
+          totalAmount: parseFloat(row.total_amount) || 0,
+          entryCount: Number(row.entry_count) || 0,
+        })),
+        entries: entries.map((entry) => ({
+          id: entry.id,
+          date: entry.date.toISOString().split("T")[0],
+          category: entry.category,
+          note: entry.note || "",
+          amount: parseFloat(entry.amount),
+          listId: entry.list_id,
+          listName: entry.list_name,
+          ownerId: entry.owner_id,
+          ownerName: entry.owner_name || "",
+          ownerEmail: entry.owner_email || "",
+        })),
+        owners: owners.map((owner) => ({
+          id: owner.id,
+          name: owner.name || "",
+          email: owner.email,
+        })),
+      });
+    } catch (error) {
+      console.error("Error loading analytics:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
 
 // Management: list all users
 app.get("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {

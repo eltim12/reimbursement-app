@@ -297,3 +297,128 @@ export async function exportPDF(listName, entries, total, userName = "") {
 // Keep old named exports as aliases for backward compatibility
 export const exportPDFEnglish = exportPDF;
 export const exportPDFChinese = exportPDF;
+
+/**
+ * Export analytics filtered table (no proof images).
+ */
+export async function exportAnalyticsPDF(
+  entries,
+  { title = "Analytics", exportedBy = "", filtersLabel = "" } = {},
+) {
+  try {
+    const pdfMake = getPdfMake();
+
+    const rows = (entries || []).map((item, index) => [
+      (index + 1).toString(),
+      item.date || "",
+      item.category || "",
+      item.note || "-",
+      formatCurrency(item.amount, "IDR"),
+      item.listName || "",
+      item.ownerName
+        ? `${item.ownerName}\n${item.ownerEmail || ""}`
+        : item.ownerEmail || "",
+    ]);
+
+    const headerRow = [
+      biCell("序号", "No.", { bold: true }),
+      biCell("日期", "Tanggal", { bold: true }),
+      biCell("类别", "Kategori", { bold: true }),
+      biCell("备注", "Catatan", { bold: true }),
+      biCell("金额", "Jumlah", { bold: true }),
+      biCell("列表", "Daftar", { bold: true }),
+      biCell("所有者", "Pemilik", { bold: true }),
+    ];
+
+    const totalAmount = (entries || []).reduce(
+      (sum, item) => sum + (Number(item.amount) || 0),
+      0,
+    );
+
+    const docDefinition = {
+      defaultStyle: {
+        font: "NotoSansSC",
+        fontSize: 8,
+        bold: true,
+      },
+      pageOrientation: "landscape",
+      pageMargins: [16, 16, 16, 16],
+      content: [
+        {
+          text: title || "数据分析 / Analitik",
+          style: "headerZh",
+          margin: [0, 0, 0, 8],
+        },
+        {
+          columns: [
+            {
+              text: `申请日期 Tanggal: ${new Date().toLocaleDateString()}`,
+              fontSize: 8,
+            },
+            exportedBy
+              ? {
+                  text: `导出人 Diekspor oleh: ${exportedBy}`,
+                  fontSize: 8,
+                  alignment: "right",
+                }
+              : { text: "" },
+          ],
+          margin: [0, 0, 0, 4],
+        },
+        filtersLabel
+          ? {
+              text: `筛选 Filter: ${filtersLabel}`,
+              fontSize: 8,
+              color: "#555555",
+              margin: [0, 0, 0, 10],
+            }
+          : { text: "", margin: [0, 0, 0, 6] },
+        {
+          table: {
+            headerRows: 1,
+            widths: [24, 60, 110, 100, 70, 90, 110],
+            body: [headerRow, ...rows],
+          },
+          layout: "lightHorizontalLines",
+        },
+        {
+          text: `总计 / Total: ${formatCurrency(totalAmount, "IDR")}`,
+          style: "totalZh",
+          margin: [0, 10, 0, 0],
+          alignment: "right",
+        },
+      ],
+      styles: {
+        headerZh: {
+          fontSize: 12,
+          bold: true,
+          color: "#171717",
+          alignment: "left",
+        },
+        totalZh: {
+          fontSize: 10,
+          bold: true,
+        },
+      },
+    };
+
+    const fileName = sanitizeFileName(title || "Analytics");
+    pdfMake.createPdf(docDefinition).getBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      const opened = window.open(url, "_blank");
+      if (!opened || opened.closed || typeof opened.closed === "undefined") {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${fileName}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    return true;
+  } catch (error) {
+    console.error("Analytics PDF generation error:", error);
+    throw error;
+  }
+}

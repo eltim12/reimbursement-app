@@ -3,6 +3,7 @@ import Home from "../views/Home.vue";
 import ListDetail from "../views/ListDetail.vue";
 import Profile from "../views/Profile.vue";
 import Users from "../views/Users.vue";
+import Analytics from "../views/Analytics.vue";
 import Login from "../views/Login.vue";
 import Register from "../views/Register.vue";
 
@@ -30,6 +31,12 @@ const routes = [
     name: "Users",
     component: Users,
     meta: { requiresAuth: true, requiresManagement: true },
+  },
+  {
+    path: "/analytics",
+    name: "Analytics",
+    component: Analytics,
+    meta: { requiresAuth: true, requiresAnalytics: true },
   },
   {
     path: "/login",
@@ -65,6 +72,11 @@ router.beforeEach((to, from, next) => {
   } else if (to.meta.guestOnly && isAuthenticated) {
     next("/");
   } else if (to.meta.requiresManagement && user.role !== "management") {
+    next("/");
+  } else if (
+    to.meta.requiresAnalytics &&
+    !["management", "finance"].includes(user.role)
+  ) {
     next("/");
   } else {
     next();

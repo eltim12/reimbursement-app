@@ -135,3 +135,92 @@ export async function exportExcel(
   const fileName = `${sanitizeFileName(listName || "Reimbursement")}.xlsx`;
   XLSX.writeFile(workbook, fileName);
 }
+
+/**
+ * Export analytics filtered table (no proof images).
+ */
+export async function exportAnalyticsExcel(
+  entries,
+  { title = "Analytics", exportedBy = "", filtersLabel = "" } = {},
+) {
+  const XLSX = await import("xlsx");
+
+  const dataRows = (entries || []).map((entry, index) => ({
+    "序号 / No.": index + 1,
+    "日期 / Tanggal": entry.date || "",
+    "类别 / Kategori": entry.category || "",
+    "备注 / Catatan": entry.note || "-",
+    "金额 / Jumlah": entry.amount ?? 0,
+    "金额显示 / Jumlah (Formatted)": formatCurrency(entry.amount, "IDR"),
+    "列表 / Daftar": entry.listName || "",
+    "所有者 / Pemilik": entry.ownerName
+      ? `${entry.ownerName} (${entry.ownerEmail || ""})`
+      : entry.ownerEmail || "",
+  }));
+
+  const totalAmount = (entries || []).reduce(
+    (sum, entry) => sum + (Number(entry.amount) || 0),
+    0,
+  );
+
+  dataRows.push({
+    "序号 / No.": "",
+    "日期 / Tanggal": "",
+    "类别 / Kategori": "",
+    "备注 / Catatan": "总计 / Total",
+    "金额 / Jumlah": totalAmount,
+    "金额显示 / Jumlah (Formatted)": formatCurrency(totalAmount, "IDR"),
+    "列表 / Daftar": "",
+    "所有者 / Pemilik": "",
+  });
+
+  const headers = [
+    "序号 / No.",
+    "日期 / Tanggal",
+    "类别 / Kategori",
+    "备注 / Catatan",
+    "金额 / Jumlah",
+    "金额显示 / Jumlah (Formatted)",
+    "列表 / Daftar",
+    "所有者 / Pemilik",
+  ];
+
+  const metaRows = [
+    [title],
+    [`申请日期 / Tanggal: ${new Date().toLocaleDateString()}`],
+  ];
+  if (exportedBy) metaRows.push([`导出人 / Diekspor oleh: ${exportedBy}`]);
+  if (filtersLabel) metaRows.push([`筛选 / Filter: ${filtersLabel}`]);
+  metaRows.push([]);
+
+  const sheetData = [
+    ...metaRows,
+    headers,
+    ...dataRows.map((row) => headers.map((key) => row[key])),
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+  worksheet["!merges"] = metaRows
+    .slice(0, -1)
+    .map((_, index) => ({
+      s: { r: index, c: 0 },
+      e: { r: index, c: headers.length - 1 },
+    }));
+  worksheet["!cols"] = [
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 36 },
+    { wch: 28 },
+    { wch: 14 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 28 },
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Analytics");
+  XLSX.writeFile(
+    workbook,
+    `${sanitizeFileName(title || "Analytics")}.xlsx`,
+  );
+}

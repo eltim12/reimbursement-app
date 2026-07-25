@@ -7,6 +7,7 @@ import {
   LogOut,
   Menu,
   Receipt,
+  BarChart3,
   UserRound,
   Users,
   X,
@@ -30,11 +31,22 @@ const user = computed(() => {
 });
 
 const isManagement = computed(() => user.value.role === "management");
+const canViewAnalytics = computed(() =>
+  ["management", "finance"].includes(user.value.role),
+);
 
 const navItems = computed(() => {
   const items = [
     { to: "/", label: t("navHome"), icon: LayoutDashboard, exact: true },
   ];
+  if (canViewAnalytics.value) {
+    items.push({
+      to: "/analytics",
+      label: t("navAnalytics"),
+      icon: BarChart3,
+      exact: true,
+    });
+  }
   if (isManagement.value) {
     items.push({
       to: "/users",
