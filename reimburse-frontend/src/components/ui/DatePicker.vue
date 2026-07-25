@@ -15,6 +15,7 @@ const props = defineProps({
     default: "Pick a date",
   },
   required: Boolean,
+  invalid: Boolean,
   class: {
     type: [String, Object, Array],
     default: "",
@@ -115,12 +116,13 @@ onUnmounted(() => {
       type="button"
       variant="outline"
       :aria-required="required"
-      :aria-invalid="required && !selectedDate ? 'true' : undefined"
+      :aria-invalid="invalid ? 'true' : undefined"
       :data-empty="!selectedDate"
       :class="
         cn(
           'h-11 w-full justify-start text-left font-normal data-[empty=true]:text-neutral-400',
-          required && !selectedDate && 'border-neutral-300',
+          invalid &&
+            'border-red-500 text-neutral-900 hover:bg-red-50 focus-visible:ring-red-500',
           $props.class,
         )
       "

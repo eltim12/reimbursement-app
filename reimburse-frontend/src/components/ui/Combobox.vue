@@ -25,6 +25,7 @@ const props = defineProps({
     type: String,
     default: "No results",
   },
+  invalid: Boolean,
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -123,12 +124,15 @@ onUnmounted(() => {
     <button
       type="button"
       :disabled="disabled"
+      :aria-invalid="invalid ? 'true' : undefined"
       :class="
         cn(
           'flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-left text-sm transition-colors',
           'hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400',
           'disabled:cursor-not-allowed disabled:opacity-50',
           !selectedLabel && 'text-neutral-400',
+          invalid &&
+            'border-red-500 text-neutral-900 hover:bg-red-50 focus-visible:ring-red-500',
         )
       "
       @click="setOpen(!open)"

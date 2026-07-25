@@ -9,6 +9,9 @@ import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
+import Field from "@/components/ui/Field.vue";
+import FieldDescription from "@/components/ui/FieldDescription.vue";
+import FieldLabel from "@/components/ui/FieldLabel.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
 import Combobox from "@/components/ui/Combobox.vue";
@@ -64,8 +67,10 @@ const exportingExcel = ref(false);
 const showNameModal = ref(false);
 const showEntryModal = ref(false);
 const showDeleteEntryModal = ref(false);
+const showSimilarEntryModal = ref(false);
 const pendingDeleteIndex = ref(null);
 const deletingEntry = ref(false);
+let similarEntryResolver = null;
 const previewImageUrl = ref(null);
 const newUserName = ref("");
 const savingName = ref(false);
@@ -87,15 +92,39 @@ const emptyEntryForm = () => ({
 
 const entryForm = ref(emptyEntryForm());
 
+const emptyEntryErrors = () => ({
+  date: "",
+  category: "",
+  note: "",
+  amount: "",
+});
+
+const entryErrors = ref(emptyEntryErrors());
+
+const clearEntryErrors = () => {
+  entryErrors.value = emptyEntryErrors();
+};
+
+const clearEntryError = (field) => {
+  if (!entryErrors.value[field]) return;
+  entryErrors.value[field] = "";
+  // Clear blank duplicate highlights on sibling fields.
+  for (const f of ["date", "category", "note", "amount"]) {
+    if (entryErrors.value[f] === " ") entryErrors.value[f] = "";
+  }
+};
+
 const openEntryModal = () => {
   if (isReadOnly.value) return;
   entryForm.value = emptyEntryForm();
+  clearEntryErrors();
   showEntryModal.value = true;
 };
 
 const closeEntryModal = () => {
   showEntryModal.value = false;
   entryForm.value = emptyEntryForm();
+  clearEntryErrors();
 };
 
 const currencyTotals = computed(() => {
@@ -138,6 +167,7 @@ const openProofPreview = (proof) => {
 };
 
 const formatAmountInput = (value) => {
+  clearEntryError("amount");
   const currency = entryForm.value.currency;
 
   if (currency === "IDR") {
@@ -157,6 +187,7 @@ const formatAmountInput = (value) => {
 const handleCurrencyChange = (value) => {
   entryForm.value.currency = value;
   entryForm.value.amount = "";
+  clearEntryError("amount");
 };
 
 const loadList = async (id) => {
@@ -184,6 +215,24 @@ const loadList = async (id) => {
   }
 };
 
+const normalizeNote = (note) => String(note || "").trim().toLowerCase();
+
+const sameAmount = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
+
+const askSimilarEntryContinue = () =>
+  new Promise((resolve) => {
+    similarEntryResolver = resolve;
+    showSimilarEntryModal.value = true;
+  });
+
+const resolveSimilarEntry = (continueAdd) => {
+  showSimilarEntryModal.value = false;
+  if (similarEntryResolver) {
+    similarEntryResolver(continueAdd);
+    similarEntryResolver = null;
+  }
+};
+
 const addEntry = async () => {
   if (isReadOnly.value) return;
 
@@ -192,18 +241,15 @@ const addEntry = async () => {
     return;
   }
 
+  clearEntryErrors();
+
   if (!entryForm.value.date) {
-    showToast(t("pleaseSelectDate"), "error");
+    entryErrors.value.date = t("pleaseSelectDate");
     return;
   }
 
-  if (!entryForm.value.category?.trim()) {
-    showToast(t("pleaseSelectCategory"), "error");
-    return;
-  }
-
-  if (!isKnownCategory(entryForm.value.category)) {
-    showToast(t("pleaseSelectCategory"), "error");
+  if (!entryForm.value.category?.trim() || !isKnownCategory(entryForm.value.category)) {
+    entryErrors.value.category = t("pleaseSelectCategory");
     return;
   }
 
@@ -212,8 +258,37 @@ const addEntry = async () => {
     entryForm.value.currency,
   );
   if (isNaN(amount) || amount <= 0) {
-    showToast(t("pleaseEnterValidAmount"), "error");
+    entryErrors.value.amount = t("pleaseEnterValidAmount");
     return;
+  }
+
+  const date = entryForm.value.date;
+  const category = entryForm.value.category;
+  const noteNorm = normalizeNote(entryForm.value.note);
+
+  const exactDuplicate = entries.value.some(
+    (entry) =>
+      entry.Date === date &&
+      sameAmount(entry.Amount, amount) &&
+      entry.Category === category &&
+      normalizeNote(entry.Note) === noteNorm,
+  );
+  if (exactDuplicate) {
+    const msg = t("duplicateEntryBlocked");
+    entryErrors.value.date = msg;
+    // Mark related fields invalid without repeating the same message.
+    entryErrors.value.category = " ";
+    entryErrors.value.note = " ";
+    entryErrors.value.amount = " ";
+    return;
+  }
+
+  const similarEntry = entries.value.some(
+    (entry) => entry.Date === date && sameAmount(entry.Amount, amount),
+  );
+  if (similarEntry) {
+    const continueAdd = await askSimilarEntryContinue();
+    if (!continueAdd) return;
   }
 
   const previousEntries = [...entries.value];
@@ -616,39 +691,78 @@ onMounted(() => loadList(route.params.id));
     >
       <form id="entry-form" class="space-y-4" @submit.prevent="addEntry">
         <div class="grid gap-4 sm:grid-cols-2">
-          <div class="space-y-2 sm:col-span-2">
-            <Label>{{ t("date") }}</Label>
+          <Field
+            class="sm:col-span-2"
+            :invalid="!!entryErrors.date"
+          >
+            <FieldLabel>{{ t("date") }}</FieldLabel>
             <DatePicker
-              v-model="entryForm.date"
+              :model-value="entryForm.date"
               :placeholder="t('pickDate')"
+              :invalid="!!entryErrors.date"
               required
+              @update:model-value="
+                (v) => {
+                  entryForm.date = v;
+                  clearEntryError('date');
+                }
+              "
             />
-          </div>
-          <div class="space-y-2 sm:col-span-2">
-            <Label>{{ t("category") }}</Label>
+            <FieldDescription v-if="entryErrors.date?.trim()">
+              {{ entryErrors.date }}
+            </FieldDescription>
+          </Field>
+          <Field
+            class="sm:col-span-2"
+            :invalid="!!entryErrors.category"
+          >
+            <FieldLabel>{{ t("category") }}</FieldLabel>
             <Combobox
-              v-model="entryForm.category"
+              :model-value="entryForm.category"
               :items="categoryItems"
               :placeholder="t('selectCategory')"
               :search-placeholder="t('searchCategory')"
               :empty-text="t('noCategoryResults')"
+              :invalid="!!entryErrors.category"
+              @update:model-value="
+                (v) => {
+                  entryForm.category = v;
+                  clearEntryError('category');
+                }
+              "
             />
-          </div>
-          <div class="space-y-2 sm:col-span-2">
-            <Label for="note">
+            <FieldDescription v-if="entryErrors.category?.trim()">
+              {{ entryErrors.category }}
+            </FieldDescription>
+          </Field>
+          <Field
+            class="sm:col-span-2"
+            :invalid="!!entryErrors.note"
+          >
+            <FieldLabel for="note">
               {{ t("note") }}
               <span class="font-normal text-neutral-400"
                 >({{ t("notePlaceholder") }})</span
               >
-            </Label>
+            </FieldLabel>
             <Input
               id="note"
-              v-model="entryForm.note"
+              :model-value="entryForm.note"
               :placeholder="t('notePlaceholder')"
+              :aria-invalid="!!entryErrors.note"
+              @update:model-value="
+                (v) => {
+                  entryForm.note = v;
+                  clearEntryError('note');
+                }
+              "
             />
-          </div>
-          <div class="space-y-2">
-            <Label>{{ t("currency") }}</Label>
+            <FieldDescription v-if="entryErrors.note?.trim()">
+              {{ entryErrors.note }}
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel>{{ t("currency") }}</FieldLabel>
             <Select
               :model-value="entryForm.currency"
               :items="currencyItems"
@@ -670,12 +784,12 @@ onMounted(() => loadList(route.params.id));
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </div>
-          <div class="space-y-2">
-            <Label for="amount">{{ t("amount") }}</Label>
+          </Field>
+          <Field :invalid="!!entryErrors.amount">
+            <FieldLabel for="amount">{{ t("amount") }}</FieldLabel>
             <div class="relative">
               <span
-                class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-neutral-400"
+                class="pointer-events-none absolute top-1/2 left-3 z-10 -translate-y-1/2 text-sm text-neutral-400"
               >
                 {{ entryForm.currency === "IDR" ? "Rp" : "¥" }}
               </span>
@@ -685,10 +799,14 @@ onMounted(() => loadList(route.params.id));
                 class="pl-9"
                 inputmode="decimal"
                 required
+                :aria-invalid="!!entryErrors.amount"
                 @update:model-value="formatAmountInput"
               />
             </div>
-          </div>
+            <FieldDescription v-if="entryErrors.amount?.trim()">
+              {{ entryErrors.amount }}
+            </FieldDescription>
+          </Field>
           <div class="min-w-0 space-y-2 sm:col-span-2">
             <Label>{{ t("tableProof") }}</Label>
             <UploadImage
@@ -747,6 +865,17 @@ onMounted(() => loadList(route.params.id));
         </div>
       </div>
     </ConfirmDialog>
+
+    <ConfirmDialog
+      :open="showSimilarEntryModal"
+      :title="t('similarEntryTitle')"
+      :description="t('similarEntryWarning')"
+      :confirm-label="t('continueAnyway')"
+      :cancel-label="t('cancel')"
+      @update:open="(v) => !v && resolveSimilarEntry(false)"
+      @confirm="resolveSimilarEntry(true)"
+      @cancel="resolveSimilarEntry(false)"
+    />
 
     <Dialog
       :open="showNameModal"

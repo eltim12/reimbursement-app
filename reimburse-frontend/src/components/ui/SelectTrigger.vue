@@ -3,11 +3,12 @@ import { inject } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import { cn } from "@/lib/utils";
 
-defineProps({
+const props = defineProps({
   class: {
     type: [String, Object, Array],
     default: "",
   },
+  invalid: Boolean,
 });
 
 const select = inject("select");
@@ -18,11 +19,14 @@ const select = inject("select");
     type="button"
     role="combobox"
     :aria-expanded="select.open.value"
+    :aria-invalid="props.invalid ? 'true' : undefined"
     :disabled="select.disabled.value"
     :class="
       cn(
         'flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50',
-        $props.class,
+        props.invalid &&
+          'border-red-500 hover:bg-red-50 focus-visible:ring-red-500',
+        props.class,
       )
     "
     @click="select.setOpen(!select.open.value)"

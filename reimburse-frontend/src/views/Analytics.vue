@@ -9,9 +9,12 @@ import {
   FileDown,
   FileSpreadsheet,
   Filter,
+  List,
+  PieChart,
   RotateCcw,
 } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
+import CategoryPieChart from "@/components/CategoryPieChart.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import CardContent from "@/components/ui/CardContent.vue";
@@ -51,6 +54,7 @@ const canAccess = computed(() =>
 const loading = ref(false);
 const exportingPdf = ref(false);
 const exportingExcel = ref(false);
+const categoryView = ref("bars"); // "bars" | "pie"
 const owners = ref([]);
 const summary = ref({ totalAmount: 0, entryCount: 0, listCount: 0 });
 const byCategory = ref([]);
@@ -279,54 +283,52 @@ onMounted(loadAnalytics);
                 :placeholder="t('pickDate')"
               />
             </div>
-            <div class="space-y-2 sm:col-span-2 lg:col-span-4">
+            <div class="space-y-2 sm:col-span-2">
               <Label>{{ t("filterOwner") }}</Label>
-              <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div class="min-w-0 flex-1">
-                  <Select
-                    :model-value="filters.ownerId"
-                    :items="ownerItems"
-                    :placeholder="t('filterAllOwners')"
-                    @update:model-value="(v) => (filters.ownerId = v ?? '')"
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem
-                          v-for="item in ownerItems"
-                          :key="item.value || 'all'"
-                          :value="item.value"
-                        >
-                          {{ item.label }}
-                        </SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div class="grid shrink-0 grid-cols-2 gap-2 sm:w-[280px]">
-                  <Button
-                    variant="outline"
-                    class="h-11"
-                    :loading="exportingPdf"
-                    :disabled="!sortedEntries.length"
-                    @click="handleExportPDF"
-                  >
-                    <FileDown class="h-4 w-4" />
-                    {{ t("exportPDF") }}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    class="h-11"
-                    :loading="exportingExcel"
-                    :disabled="!sortedEntries.length"
-                    @click="handleExportExcel"
-                  >
-                    <FileSpreadsheet class="h-4 w-4" />
-                    {{ t("exportExcel") }}
-                  </Button>
-                </div>
+              <Select
+                :model-value="filters.ownerId"
+                :items="ownerItems"
+                :placeholder="t('filterAllOwners')"
+                @update:model-value="(v) => (filters.ownerId = v ?? '')"
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="item in ownerItems"
+                      :key="item.value || 'all'"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="flex items-end sm:col-span-2">
+              <div class="grid w-full grid-cols-2 gap-2">
+                <Button
+                  variant="outline"
+                  class="h-11"
+                  :loading="exportingPdf"
+                  :disabled="!sortedEntries.length"
+                  @click="handleExportPDF"
+                >
+                  <FileDown class="h-4 w-4" />
+                  {{ t("exportPDF") }}
+                </Button>
+                <Button
+                  variant="outline"
+                  class="h-11"
+                  :loading="exportingExcel"
+                  :disabled="!sortedEntries.length"
+                  @click="handleExportExcel"
+                >
+                  <FileSpreadsheet class="h-4 w-4" />
+                  {{ t("exportExcel") }}
+                </Button>
               </div>
             </div>
           </div>
@@ -383,11 +385,49 @@ onMounted(loadAnalytics);
 
       <Card>
         <CardContent class="space-y-4 p-5">
-          <div class="flex items-center gap-2">
-            <BarChart3 class="h-4 w-4 text-neutral-700" />
-            <h2 class="text-base font-medium text-neutral-900">
-              {{ t("analyticsByCategory") }}
-            </h2>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex items-center gap-2">
+              <BarChart3 class="h-4 w-4 text-neutral-700" />
+              <h2 class="text-base font-medium text-neutral-900">
+                {{ t("analyticsByCategory") }}
+              </h2>
+            </div>
+            <div
+              class="inline-flex w-fit rounded-lg border border-neutral-200 bg-neutral-50 p-0.5"
+              role="tablist"
+              :aria-label="t('analyticsByCategory')"
+            >
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="categoryView === 'bars'"
+                :class="
+                  categoryView === 'bars'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                "
+                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors"
+                @click="categoryView = 'bars'"
+              >
+                <List class="h-4 w-4" />
+                {{ t("analyticsViewBars") }}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="categoryView === 'pie'"
+                :class="
+                  categoryView === 'pie'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                "
+                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors"
+                @click="categoryView = 'pie'"
+              >
+                <PieChart class="h-4 w-4" />
+                {{ t("analyticsViewPie") }}
+              </button>
+            </div>
           </div>
           <div v-if="loading" class="py-8 text-center text-sm text-neutral-500">
             Loading…
@@ -398,6 +438,11 @@ onMounted(loadAnalytics);
           >
             {{ t("noAnalyticsData") }}
           </div>
+          <CategoryPieChart
+            v-else-if="categoryView === 'pie'"
+            :data="byCategory"
+            :total-label="t('analyticsChartTotal')"
+          />
           <div v-else class="space-y-3">
             <div
               v-for="row in byCategory"
