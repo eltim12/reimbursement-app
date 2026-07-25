@@ -3,7 +3,8 @@ import axios from "axios";
 const api = axios.create({
   baseURL:
     import.meta.env.VITE_API_BASE_URL ||
-    "https://reimburse-api.trimind.studio/api",
+    // "https://reimburse-api.trimind.studio/api",
+    "http://localhost:3000/api",
   headers: {
     "Content-Type": "application/json",
   },
@@ -87,6 +88,38 @@ export default {
   // Update User Name
   async updateUserName(name) {
     const response = await api.put("/users/name", { name });
+    return response.data;
+  },
+
+  // Profile
+  async getProfile() {
+    const response = await api.get("/users/me");
+    return response.data;
+  },
+
+  async updateProfile(data) {
+    const response = await api.put("/users/profile", data);
+    return response.data;
+  },
+
+  // Management admin
+  async getAdminUsers() {
+    const response = await api.get("/admin/users");
+    return response.data;
+  },
+
+  async createAdminUser(data) {
+    const response = await api.post("/admin/users", data);
+    return response.data;
+  },
+
+  async updateAdminUser(id, data) {
+    const response = await api.put(`/admin/users/${id}`, data);
+    return response.data;
+  },
+
+  async deleteAdminUser(id) {
+    const response = await api.delete(`/admin/users/${id}`);
     return response.data;
   },
 };

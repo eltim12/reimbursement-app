@@ -30,11 +30,21 @@ async function initDatabase() {
         email VARCHAR(255) NOT NULL UNIQUE,
         password VARCHAR(255) NOT NULL,
         name VARCHAR(255),
+        role VARCHAR(50) NOT NULL DEFAULT 'user',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log("✓ Created users table");
+
+    // Ensure role column exists on older databases
+    const [userColumns] = await connection.query("DESCRIBE users");
+    if (!userColumns.some((col) => col.Field === "role")) {
+      await connection.query(
+        "ALTER TABLE users ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'user' AFTER name",
+      );
+      console.log("✓ Added role column to users table");
+    }
 
     // Create lists table
     await connection.query(`

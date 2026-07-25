@@ -1,19 +1,10 @@
 <template>
-  <v-app>
-    <v-main>
-      <router-view />
-    </v-main>
-  </v-app>
+  <div id="app-root">
+    <router-view />
+    <Toaster />
+  </div>
 </template>
 
 <script setup>
+import Toaster from "@/components/ui/Toaster.vue";
 </script>
-
-<style>
-/* Ensure app background is dark */
-.v-application__wrap {
-  background: var(--color-background) !important;
-  min-height: 100vh;
-}
-</style>
-

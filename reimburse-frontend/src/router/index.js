@@ -1,46 +1,74 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
-import Login from '../views/Login.vue'
-import Register from '../views/Register.vue'
+import { createRouter, createWebHistory } from "vue-router";
+import Home from "../views/Home.vue";
+import ListDetail from "../views/ListDetail.vue";
+import Profile from "../views/Profile.vue";
+import Users from "../views/Users.vue";
+import Login from "../views/Login.vue";
+import Register from "../views/Register.vue";
 
 const routes = [
   {
-    path: '/',
-    name: 'Home',
+    path: "/",
+    name: "Home",
     component: Home,
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true },
   },
   {
-    path: '/login',
-    name: 'Login',
+    path: "/lists/:id",
+    name: "ListDetail",
+    component: ListDetail,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/profile",
+    name: "Profile",
+    component: Profile,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/users",
+    name: "Users",
+    component: Users,
+    meta: { requiresAuth: true, requiresManagement: true },
+  },
+  {
+    path: "/login",
+    name: "Login",
     component: Login,
-    meta: { guestOnly: true }
+    meta: { guestOnly: true },
   },
   {
-    path: '/register',
-    name: 'Register',
+    path: "/register",
+    name: "Register",
     component: Register,
-    meta: { guestOnly: true }
-  }
-]
+    meta: { guestOnly: true },
+  },
+];
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
-})
+  routes,
+});
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
-  const isAuthenticated = !!token
+  const token = localStorage.getItem("token");
+  const isAuthenticated = !!token;
+  let user = {};
+  try {
+    user = JSON.parse(localStorage.getItem("user") || "{}");
+  } catch {
+    user = {};
+  }
 
   if (to.meta.requiresAuth && !isAuthenticated) {
-    next('/login')
+    next("/login");
   } else if (to.meta.guestOnly && isAuthenticated) {
-    next('/')
+    next("/");
+  } else if (to.meta.requiresManagement && user.role !== "management") {
+    next("/");
   } else {
-    next()
+    next();
   }
-})
+});
 
-export default router
-
+export default router;
