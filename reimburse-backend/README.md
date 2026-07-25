@@ -14,31 +14,63 @@ npm install
 cp .env.example .env
 ```
 
-3. Configure MySQL database:
-   - Install MySQL if not already installed
-   - Create a MySQL database (or use existing)
-   - Update `.env` with your MySQL credentials:
-     ```
-     DB_HOST=localhost
-     DB_USER=root
-     DB_PASSWORD=your-mysql-password
-     DB_NAME=reimbursement_db
-     DB_PORT=3306
-     ```
+3. Configure MySQL credentials in `.env`.
 
-4. Initialize the database:
+4. Apply schema + seed system users:
 ```bash
-node database/init.js
+npm run db:setup
 ```
 
 5. Start the server:
 ```bash
-# Development mode with auto-reload
+# Development
 npm run dev
 
-# Production mode
+# Production
 npm start
 ```
+
+On startup the server also runs migrate + seed automatically (idempotent).
+
+## Database commands
+
+| Command | Purpose |
+|---|---|
+| `npm run db:migrate` | Create/update tables and columns |
+| `npm run db:seed` | Upsert management + finance users |
+| `npm run db:setup` | migrate + seed (use on VPS deploy) |
+| `npm run init-db` | Alias for migrate (legacy) |
+
+### System users (seeded)
+
+| Email | Role | Default password |
+|---|---|---|
+| `admin@whtb.com` | management | `Wuhuatianbao88!` |
+| `finance@whtb.com` | finance | `BankOfChina88!` |
+
+Set `SEED_RESET_PASSWORDS=false` after first deploy if you change those passwords and do not want them overwritten on restart.
+
+Set `RUN_SEEDS=false` to skip seeding on server start (migrate still runs).
+
+## VPS deploy
+
+```bash
+# On the VPS, after pulling new code:
+cd reimburse-backend
+npm install --production
+cp -n .env.example .env   # only if .env does not exist yet
+# edit .env with production DB + JWT_SECRET
+npm run db:setup
+npm start
+# or with pm2:
+# pm2 restart reimburse-api || pm2 start server.js --name reimburse-api
+```
+
+Because migrate/seed are idempotent, restarting the app after deploy is enough to apply schema updates and ensure system users exist.
+
+When you add a new migration or seed user later:
+1. Update `database/migrate.js` and/or `database/seed.js`
+2. Deploy + restart (or run `npm run db:setup`)
 
 ## Features
 
@@ -67,12 +99,6 @@ Images are uploaded via `multipart/form-data` with field name `image`. The serve
 3. Save it to `public/images/` folder
 4. Return the URL path (e.g., `/images/filename.jpg`)
 
-Images are automatically compressed using Sharp library with:
-- Progressive JPEG encoding
-- Quality reduction if needed
-- Dimension resizing for very large images
-- Multiple compression attempts until under 1MB
-
 ## Environment Variables
 
 - `DB_HOST` - MySQL host (default: localhost)
@@ -82,12 +108,12 @@ Images are automatically compressed using Sharp library with:
 - `DB_PORT` - MySQL port (default: 3306)
 - `PORT` - Server port (default: 3000)
 - `NODE_ENV` - Environment (development/production)
+- `JWT_SECRET` - JWT signing secret
+- `RUN_SEEDS` - Run seeds on startup / setup (default: true)
+- `SEED_RESET_PASSWORDS` - Reset system user passwords on seed (default: true)
 
 ## Database Schema
 
-The database includes two tables:
-- `lists` - Stores reimbursement lists
-- `entries` - Stores individual reimbursement entries
-
-See `database/schema.sql` for full schema details.
-
+- `users` - Auth accounts (`role`: user | admin | management | finance)
+- `lists` - Reimbursement lists
+- `entries` - Individual reimbursement entries

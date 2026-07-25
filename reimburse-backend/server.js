@@ -841,34 +841,17 @@ app.delete("/api/entries/:id", async (req, res) => {
   }
 });
 
-// Verify database tables exist on startup
-async function verifyDatabase() {
+// Apply schema migrations + system user seeds on startup (idempotent)
+async function setupDatabaseOnStartup() {
   try {
-    const [tables] = await db.query("SHOW TABLES");
-    const tableNames = tables.map((t) => Object.values(t)[0]);
-
-    if (!tableNames.includes("lists") || !tableNames.includes("entries")) {
-      console.warn(
-        "⚠️  Warning: Database tables may not exist. Run: npm run init-db",
-      );
-    } else {
-      console.log("✓ Database tables verified");
-    }
-
-    if (tableNames.includes("users")) {
-      const [columns] = await db.query("DESCRIBE users");
-      if (!columns.some((col) => col.Field === "role")) {
-        await db.query(
-          "ALTER TABLE users ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'user' AFTER name",
-        );
-        console.log("✓ Added users.role column");
-      }
-    }
-  } catch (error) {
-    console.error("⚠️  Database verification failed:", error.message);
-    console.error(
-      "   Please ensure the database is initialized: npm run init-db",
+    const setup = require("./database/setup");
+    const runSeed = !["0", "false", "no"].includes(
+      String(process.env.RUN_SEEDS || "true").toLowerCase(),
     );
+    await setup({ db, runSeed });
+  } catch (error) {
+    console.error("⚠️  Database setup failed:", error.message);
+    console.error("   Run manually: npm run db:setup");
   }
 }
 
@@ -879,5 +862,5 @@ app.listen(PORT, async () => {
   console.log(
     `Images served from: ${path.join(__dirname, "public", "images")}`,
   );
-  await verifyDatabase();
+  await setupDatabaseOnStartup();
 });
