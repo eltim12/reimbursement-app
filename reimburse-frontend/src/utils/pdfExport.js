@@ -300,15 +300,49 @@ export const exportPDFChinese = exportPDF;
 
 /**
  * Export analytics filtered table (no proof images).
+ * Category/note and headers follow the active UI language.
  */
 export async function exportAnalyticsPDF(
   entries,
-  { title = "Analytics", exportedBy = "", filtersLabel = "" } = {},
+  {
+    title = "Analytics",
+    exportedBy = "",
+    filtersLabel = "",
+    locale = "en",
+    labels = {},
+    formatCategory = (v) => v,
+  } = {},
 ) {
   try {
     const pdfMake = getPdfMake();
+    const { translateToLocale } = await import("./translator");
 
-    const rows = (entries || []).map((item, index) => [
+    const L = {
+      no: labels.no || (locale === "zh" ? "序号" : "No."),
+      date: labels.date || (locale === "zh" ? "日期" : "Tanggal"),
+      category: labels.category || (locale === "zh" ? "类别" : "Kategori"),
+      note: labels.note || (locale === "zh" ? "备注" : "Catatan"),
+      amount: labels.amount || (locale === "zh" ? "金额" : "Jumlah"),
+      list: labels.list || (locale === "zh" ? "列表" : "Daftar"),
+      owner: labels.owner || (locale === "zh" ? "所有者" : "Pemilik"),
+      total: labels.total || (locale === "zh" ? "总计" : "Total"),
+      exportDate:
+        labels.exportDate || (locale === "zh" ? "申请日期" : "Tanggal"),
+      exportedByLabel:
+        labels.exportedByLabel ||
+        (locale === "zh" ? "导出人" : "Diekspor oleh"),
+      filter: labels.filter || (locale === "zh" ? "筛选" : "Filter"),
+    };
+
+    const localizedEntries = await Promise.all(
+      (entries || []).map(async (entry) => ({
+        ...entry,
+        category: formatCategory(entry.category || ""),
+        note: await translateToLocale(entry.note || "-", locale),
+      })),
+    );
+
+    const rows = localizedEntries.map((item, index) => [
       (index + 1).toString(),
       item.date || "",
       item.category || "",
@@ -321,16 +355,16 @@ export async function exportAnalyticsPDF(
     ]);
 
     const headerRow = [
-      biCell("序号", "No.", { bold: true }),
-      biCell("日期", "Tanggal", { bold: true }),
-      biCell("类别", "Kategori", { bold: true }),
-      biCell("备注", "Catatan", { bold: true }),
-      biCell("金额", "Jumlah", { bold: true }),
-      biCell("列表", "Daftar", { bold: true }),
-      biCell("所有者", "Pemilik", { bold: true }),
-    ];
+      L.no,
+      L.date,
+      L.category,
+      L.note,
+      L.amount,
+      L.list,
+      L.owner,
+    ].map((text) => ({ text, bold: true }));
 
-    const totalAmount = (entries || []).reduce(
+    const totalAmount = localizedEntries.reduce(
       (sum, item) => sum + (Number(item.amount) || 0),
       0,
     );
@@ -345,19 +379,19 @@ export async function exportAnalyticsPDF(
       pageMargins: [16, 16, 16, 16],
       content: [
         {
-          text: title || "数据分析 / Analitik",
+          text: title || L.total,
           style: "headerZh",
           margin: [0, 0, 0, 8],
         },
         {
           columns: [
             {
-              text: `申请日期 Tanggal: ${new Date().toLocaleDateString()}`,
+              text: `${L.exportDate}: ${new Date().toLocaleDateString()}`,
               fontSize: 8,
             },
             exportedBy
               ? {
-                  text: `导出人 Diekspor oleh: ${exportedBy}`,
+                  text: `${L.exportedByLabel}: ${exportedBy}`,
                   fontSize: 8,
                   alignment: "right",
                 }
@@ -367,7 +401,7 @@ export async function exportAnalyticsPDF(
         },
         filtersLabel
           ? {
-              text: `筛选 Filter: ${filtersLabel}`,
+              text: `${L.filter}: ${filtersLabel}`,
               fontSize: 8,
               color: "#555555",
               margin: [0, 0, 0, 10],
@@ -382,7 +416,7 @@ export async function exportAnalyticsPDF(
           layout: "lightHorizontalLines",
         },
         {
-          text: `总计 / Total: ${formatCurrency(totalAmount, "IDR")}`,
+          text: `${L.total}: ${formatCurrency(totalAmount, "IDR")}`,
           style: "totalZh",
           margin: [0, 10, 0, 0],
           alignment: "right",

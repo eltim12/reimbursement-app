@@ -138,59 +138,96 @@ export async function exportExcel(
 
 /**
  * Export analytics filtered table (no proof images).
+ * Category/note and headers follow the active UI language.
  */
 export async function exportAnalyticsExcel(
   entries,
-  { title = "Analytics", exportedBy = "", filtersLabel = "" } = {},
+  {
+    title = "Analytics",
+    exportedBy = "",
+    filtersLabel = "",
+    locale = "en",
+    labels = {},
+    formatCategory = (v) => v,
+  } = {},
 ) {
   const XLSX = await import("xlsx");
+  const { translateToLocale } = await import("./translator");
 
-  const dataRows = (entries || []).map((entry, index) => ({
-    "序号 / No.": index + 1,
-    "日期 / Tanggal": entry.date || "",
-    "类别 / Kategori": entry.category || "",
-    "备注 / Catatan": entry.note || "-",
-    "金额 / Jumlah": entry.amount ?? 0,
-    "金额显示 / Jumlah (Formatted)": formatCurrency(entry.amount, "IDR"),
-    "列表 / Daftar": entry.listName || "",
-    "所有者 / Pemilik": entry.ownerName
+  const L = {
+    no: labels.no || (locale === "zh" ? "序号" : "No."),
+    date: labels.date || (locale === "zh" ? "日期" : "Tanggal"),
+    category: labels.category || (locale === "zh" ? "类别" : "Kategori"),
+    note: labels.note || (locale === "zh" ? "备注" : "Catatan"),
+    amount: labels.amount || (locale === "zh" ? "金额" : "Jumlah"),
+    amountFormatted:
+      labels.amountFormatted ||
+      (locale === "zh" ? "金额显示" : "Jumlah (Formatted)"),
+    list: labels.list || (locale === "zh" ? "列表" : "Daftar"),
+    owner: labels.owner || (locale === "zh" ? "所有者" : "Pemilik"),
+    total: labels.total || (locale === "zh" ? "总计" : "Total"),
+    exportDate:
+      labels.exportDate || (locale === "zh" ? "申请日期" : "Tanggal"),
+    exportedByLabel:
+      labels.exportedByLabel ||
+      (locale === "zh" ? "导出人" : "Diekspor oleh"),
+    filter: labels.filter || (locale === "zh" ? "筛选" : "Filter"),
+  };
+
+  const localizedEntries = await Promise.all(
+    (entries || []).map(async (entry) => ({
+      ...entry,
+      category: formatCategory(entry.category || ""),
+      note: await translateToLocale(entry.note || "-", locale),
+    })),
+  );
+
+  const headers = [
+    L.no,
+    L.date,
+    L.category,
+    L.note,
+    L.amount,
+    L.amountFormatted,
+    L.list,
+    L.owner,
+  ];
+
+  const dataRows = localizedEntries.map((entry, index) => ({
+    [L.no]: index + 1,
+    [L.date]: entry.date || "",
+    [L.category]: entry.category || "",
+    [L.note]: entry.note || "-",
+    [L.amount]: entry.amount ?? 0,
+    [L.amountFormatted]: formatCurrency(entry.amount, "IDR"),
+    [L.list]: entry.listName || "",
+    [L.owner]: entry.ownerName
       ? `${entry.ownerName} (${entry.ownerEmail || ""})`
       : entry.ownerEmail || "",
   }));
 
-  const totalAmount = (entries || []).reduce(
+  const totalAmount = localizedEntries.reduce(
     (sum, entry) => sum + (Number(entry.amount) || 0),
     0,
   );
 
   dataRows.push({
-    "序号 / No.": "",
-    "日期 / Tanggal": "",
-    "类别 / Kategori": "",
-    "备注 / Catatan": "总计 / Total",
-    "金额 / Jumlah": totalAmount,
-    "金额显示 / Jumlah (Formatted)": formatCurrency(totalAmount, "IDR"),
-    "列表 / Daftar": "",
-    "所有者 / Pemilik": "",
+    [L.no]: "",
+    [L.date]: "",
+    [L.category]: "",
+    [L.note]: L.total,
+    [L.amount]: totalAmount,
+    [L.amountFormatted]: formatCurrency(totalAmount, "IDR"),
+    [L.list]: "",
+    [L.owner]: "",
   });
-
-  const headers = [
-    "序号 / No.",
-    "日期 / Tanggal",
-    "类别 / Kategori",
-    "备注 / Catatan",
-    "金额 / Jumlah",
-    "金额显示 / Jumlah (Formatted)",
-    "列表 / Daftar",
-    "所有者 / Pemilik",
-  ];
 
   const metaRows = [
     [title],
-    [`申请日期 / Tanggal: ${new Date().toLocaleDateString()}`],
+    [`${L.exportDate}: ${new Date().toLocaleDateString()}`],
   ];
-  if (exportedBy) metaRows.push([`导出人 / Diekspor oleh: ${exportedBy}`]);
-  if (filtersLabel) metaRows.push([`筛选 / Filter: ${filtersLabel}`]);
+  if (exportedBy) metaRows.push([`${L.exportedByLabel}: ${exportedBy}`]);
+  if (filtersLabel) metaRows.push([`${L.filter}: ${filtersLabel}`]);
   metaRows.push([]);
 
   const sheetData = [

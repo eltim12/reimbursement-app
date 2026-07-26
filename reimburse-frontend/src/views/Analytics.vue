@@ -36,7 +36,7 @@ import { formatCurrency } from "@/utils/formatters";
 import { exportAnalyticsPDF } from "@/utils/pdfExport";
 
 const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { showToast } = useToast();
 const {
   categoryItems,
@@ -223,6 +223,22 @@ const exportMeta = () => ({
     currentUser.value.email ||
     "",
   filtersLabel: filtersLabel.value,
+  locale: locale.value,
+  formatCategory: (value) => getCategoryLabel(value),
+  labels: {
+    no: t("tableNo"),
+    date: t("tableDate"),
+    category: t("tableCategory"),
+    note: t("tableNote"),
+    amount: t("tableAmount"),
+    amountFormatted: `${t("tableAmount")} (${locale.value === "zh" ? "格式化" : "Formatted"})`,
+    list: t("currentList"),
+    owner: t("listOwner"),
+    total: t("total"),
+    exportDate: t("tableDate"),
+    exportedByLabel: locale.value === "zh" ? "导出人" : "Diekspor oleh",
+    filter: locale.value === "zh" ? "筛选" : "Filter",
+  },
 });
 
 const handleExportPDF = async () => {
