@@ -36,7 +36,7 @@ const routes = [
     path: "/analytics",
     name: "Analytics",
     component: Analytics,
-    meta: { requiresAuth: true, requiresAnalytics: true },
+    meta: { requiresAuth: true },
   },
   {
     path: "/login",
@@ -72,11 +72,6 @@ router.beforeEach((to, from, next) => {
   } else if (to.meta.guestOnly && isAuthenticated) {
     next("/");
   } else if (to.meta.requiresManagement && user.role !== "management") {
-    next("/");
-  } else if (
-    to.meta.requiresAnalytics &&
-    !["management", "finance"].includes(user.role)
-  ) {
     next("/");
   } else {
     next();

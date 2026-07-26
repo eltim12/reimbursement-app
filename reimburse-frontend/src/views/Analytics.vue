@@ -47,7 +47,8 @@ const currentUser = computed(() => {
   }
 });
 
-const canAccess = computed(() =>
+const canAccess = computed(() => !!currentUser.value?.id || !!currentUser.value?.email);
+const canFilterOwners = computed(() =>
   ["management", "finance"].includes(currentUser.value.role),
 );
 
@@ -172,7 +173,9 @@ const loadAnalytics = async () => {
     if (filters.value.category) params.category = filters.value.category;
     if (filters.value.dateFrom) params.dateFrom = filters.value.dateFrom;
     if (filters.value.dateTo) params.dateTo = filters.value.dateTo;
-    if (filters.value.ownerId) params.ownerId = filters.value.ownerId;
+    if (canFilterOwners.value && filters.value.ownerId) {
+      params.ownerId = filters.value.ownerId;
+    }
 
     const response = await api.getAnalytics(params);
     if (!response.success) throw new Error("failed");
@@ -283,7 +286,10 @@ onMounted(loadAnalytics);
                 :placeholder="t('pickDate')"
               />
             </div>
-            <div class="space-y-2 sm:col-span-2">
+            <div
+              v-if="canFilterOwners"
+              class="space-y-2 sm:col-span-2"
+            >
               <Label>{{ t("filterOwner") }}</Label>
               <Select
                 :model-value="filters.ownerId"
@@ -307,7 +313,10 @@ onMounted(loadAnalytics);
                 </SelectContent>
               </Select>
             </div>
-            <div class="flex items-end sm:col-span-2">
+            <div
+              class="flex items-end"
+              :class="canFilterOwners ? 'sm:col-span-2' : 'sm:col-span-2 lg:col-span-4'"
+            >
               <div class="grid w-full grid-cols-2 gap-2">
                 <Button
                   variant="outline"
@@ -519,19 +528,28 @@ onMounted(loadAnalytics);
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     {{ t("currentList") }}
                   </th>
-                  <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
+                  <th
+                    v-if="canFilterOwners"
+                    class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500"
+                  >
                     {{ t("listOwner") }}
                   </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="6" class="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    :colspan="canFilterOwners ? 6 : 5"
+                    class="px-4 py-8 text-center text-neutral-500"
+                  >
                     Loading…
                   </td>
                 </tr>
                 <tr v-else-if="sortedEntries.length === 0">
-                  <td colspan="6" class="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    :colspan="canFilterOwners ? 6 : 5"
+                    class="px-4 py-8 text-center text-neutral-500"
+                  >
                     {{ t("noAnalyticsData") }}
                   </td>
                 </tr>
@@ -556,7 +574,10 @@ onMounted(loadAnalytics);
                   <td class="whitespace-nowrap px-4 py-3">
                     {{ entry.listName }}
                   </td>
-                  <td class="whitespace-nowrap px-4 py-3 text-neutral-600">
+                  <td
+                    v-if="canFilterOwners"
+                    class="whitespace-nowrap px-4 py-3 text-neutral-600"
+                  >
                     <div class="font-medium text-neutral-900">
                       {{ entry.ownerName || "—" }}
                     </div>

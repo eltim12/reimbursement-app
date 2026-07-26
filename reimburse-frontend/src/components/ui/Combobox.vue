@@ -156,7 +156,7 @@ onUnmounted(() => {
             ref="searchEl"
             v-model="query"
             type="text"
-            class="h-10 w-full rounded-md border border-neutral-200 bg-white pr-3 pl-9 text-sm outline-none focus:ring-2 focus:ring-neutral-400"
+            class="h-10 w-full rounded-md border border-neutral-200 bg-white pr-3 pl-9 text-base outline-none focus:ring-2 focus:ring-neutral-400"
             :placeholder="searchPlaceholder"
             @keydown.stop
           />

@@ -92,14 +92,9 @@ const requireManagement = (req, res, next) => {
   next();
 };
 
-const requireAnalyticsAccess = (req, res, next) => {
-  if (!canViewAllLists(req.user)) {
-    return res
-      .status(403)
-      .json({ success: false, error: "Analytics access required" });
-  }
-  next();
-};
+// Analytics for management + finance (all data) and normal users (own data only)
+// Auth is enough; scoping is enforced in the handler.
+const requireAnalyticsAccess = (req, res, next) => next();
 
 // Routes
 
@@ -186,7 +181,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// Analytics for management + finance
+// Analytics: management/finance see all; other roles see only their own lists
 app.get(
   "/api/analytics",
   authenticateToken,
@@ -194,6 +189,7 @@ app.get(
   async (req, res) => {
     try {
       const { category, dateFrom, dateTo, ownerId } = req.query;
+      const scopedToSelf = !canViewAllLists(req.user);
 
       const where = [];
       const params = [];
@@ -210,7 +206,12 @@ app.get(
         where.push("e.date <= ?");
         params.push(dateTo);
       }
-      if (ownerId) {
+
+      // Normal users cannot query other owners — always force own user_id.
+      if (scopedToSelf) {
+        where.push("l.user_id = ?");
+        params.push(req.user.id);
+      } else if (ownerId) {
         where.push("l.user_id = ?");
         params.push(Number(ownerId));
       }
@@ -262,17 +263,28 @@ app.get(
         params,
       );
 
-      const [owners] = await db.query(
-        `SELECT DISTINCT u.id, u.name, u.email
-         FROM users u
-         INNER JOIN lists l ON l.user_id = u.id
-         ORDER BY u.name ASC, u.email ASC`,
-      );
+      let owners = [];
+      if (scopedToSelf) {
+        const [selfRows] = await db.query(
+          "SELECT id, name, email FROM users WHERE id = ?",
+          [req.user.id],
+        );
+        owners = selfRows;
+      } else {
+        const [ownerRows] = await db.query(
+          `SELECT DISTINCT u.id, u.name, u.email
+           FROM users u
+           INNER JOIN lists l ON l.user_id = u.id
+           ORDER BY u.name ASC, u.email ASC`,
+        );
+        owners = ownerRows;
+      }
 
       const summary = summaryRows[0] || {};
 
       res.json({
         success: true,
+        scopedToSelf,
         summary: {
           totalAmount: parseFloat(summary.total_amount) || 0,
           entryCount: Number(summary.entry_count) || 0,

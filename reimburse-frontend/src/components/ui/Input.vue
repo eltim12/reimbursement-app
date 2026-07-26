@@ -43,7 +43,7 @@ const isInvalid = computed(() => {
     :aria-invalid="isInvalid || undefined"
     :class="
       cn(
-        'flex h-11 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50',
+        'flex h-11 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-base text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50',
         isInvalid &&
           'border-red-500 focus-visible:ring-red-500 aria-invalid:border-red-500 aria-invalid:ring-red-500/20',
         $props.class,
