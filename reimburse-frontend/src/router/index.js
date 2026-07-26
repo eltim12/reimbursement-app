@@ -3,6 +3,7 @@ import Home from "../views/Home.vue";
 import ListDetail from "../views/ListDetail.vue";
 import Profile from "../views/Profile.vue";
 import Users from "../views/Users.vue";
+import Categories from "../views/Categories.vue";
 import Analytics from "../views/Analytics.vue";
 import Login from "../views/Login.vue";
 import Register from "../views/Register.vue";
@@ -31,6 +32,12 @@ const routes = [
     name: "Users",
     component: Users,
     meta: { requiresAuth: true, requiresManagement: true },
+  },
+  {
+    path: "/categories",
+    name: "Categories",
+    component: Categories,
+    meta: { requiresAuth: true, requiresCategoryAdmin: true },
   },
   {
     path: "/analytics",
@@ -67,11 +74,17 @@ router.beforeEach((to, from, next) => {
     user = {};
   }
 
+  const canManageCategories = ["management", "finance", "admin"].includes(
+    user.role,
+  );
+
   if (to.meta.requiresAuth && !isAuthenticated) {
     next("/login");
   } else if (to.meta.guestOnly && isAuthenticated) {
     next("/");
   } else if (to.meta.requiresManagement && user.role !== "management") {
+    next("/");
+  } else if (to.meta.requiresCategoryAdmin && !canManageCategories) {
     next("/");
   } else {
     next();

@@ -28,16 +28,21 @@ import SelectItem from "@/components/ui/SelectItem.vue";
 import SelectTrigger from "@/components/ui/SelectTrigger.vue";
 import SelectValue from "@/components/ui/SelectValue.vue";
 import { useI18n } from "@/composables/useI18n";
+import { useCategories } from "@/composables/useCategories";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
-import { CATEGORIES } from "@/utils/categories";
 import { exportAnalyticsExcel } from "@/utils/excelExport";
 import { formatCurrency } from "@/utils/formatters";
 import { exportAnalyticsPDF } from "@/utils/pdfExport";
 
 const router = useRouter();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const { showToast } = useToast();
+const {
+  categoryItems,
+  loadCategories,
+  getCategoryLabel,
+} = useCategories();
 
 const currentUser = computed(() => {
   try {
@@ -73,12 +78,7 @@ const filters = ref({
 
 const categoryFilterItems = computed(() => [
   { value: "", label: t("filterAllCategories") },
-  ...CATEGORIES.map((c) => ({
-    value: c.value,
-    label: locale.value === "zh" ? `${c.zh} / ${c.id}` : `${c.id} / ${c.zh}`,
-    id: c.id,
-    zh: c.zh,
-  })),
+  ...categoryItems.value,
 ]);
 
 const ownerItems = computed(() => [
@@ -90,6 +90,13 @@ const ownerItems = computed(() => [
       : owner.email,
   })),
 ]);
+
+const pieChartData = computed(() =>
+  byCategory.value.map((row) => ({
+    ...row,
+    category: getCategoryLabel(row.category),
+  })),
+);
 
 const maxCategoryTotal = computed(() =>
   Math.max(...byCategory.value.map((row) => row.totalAmount), 0),
@@ -133,7 +140,11 @@ const sortedEntries = computed(() => {
 
 const filtersLabel = computed(() => {
   const parts = [];
-  if (filters.value.category) parts.push(`${t("category")}: ${filters.value.category}`);
+  if (filters.value.category) {
+    parts.push(
+      `${t("category")}: ${getCategoryLabel(filters.value.category)}`,
+    );
+  }
   if (filters.value.dateFrom) parts.push(`${t("filterDateFrom")}: ${filters.value.dateFrom}`);
   if (filters.value.dateTo) parts.push(`${t("filterDateTo")}: ${filters.value.dateTo}`);
   if (filters.value.ownerId) {
@@ -246,7 +257,10 @@ const handleExportExcel = async () => {
   }
 };
 
-onMounted(loadAnalytics);
+onMounted(async () => {
+  await loadCategories();
+  await loadAnalytics();
+});
 </script>
 
 <template>
@@ -449,7 +463,7 @@ onMounted(loadAnalytics);
           </div>
           <CategoryPieChart
             v-else-if="categoryView === 'pie'"
-            :data="byCategory"
+            :data="pieChartData"
             :total-label="t('analyticsChartTotal')"
           />
           <div v-else class="space-y-3">
@@ -460,7 +474,7 @@ onMounted(loadAnalytics);
             >
               <div class="flex items-start justify-between gap-3 text-sm">
                 <div class="min-w-0 flex-1 font-medium text-neutral-900">
-                  {{ row.category }}
+                  {{ getCategoryLabel(row.category) }}
                 </div>
                 <div class="shrink-0 text-right font-mono text-neutral-700">
                   {{ formatCurrency(row.totalAmount, "IDR") }}
@@ -563,7 +577,7 @@ onMounted(loadAnalytics);
                     {{ entry.date }}
                   </td>
                   <td class="max-w-xs px-4 py-3 font-medium">
-                    {{ entry.category }}
+                    {{ getCategoryLabel(entry.category) }}
                   </td>
                   <td class="max-w-xs truncate px-4 py-3 text-neutral-600">
                     {{ entry.note || "—" }}

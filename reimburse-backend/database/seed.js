@@ -70,6 +70,10 @@ async function seed(db) {
   for (const user of SYSTEM_USERS) {
     await upsertUser(db, user, resetPassword);
   }
+
+  const { seedCategories } = require("./categories");
+  await seedCategories(db);
+
   console.log("✓ Seeding complete");
 }
 

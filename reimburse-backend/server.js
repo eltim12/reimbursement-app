@@ -83,11 +83,23 @@ const authenticateToken = (req, res, next) => {
 const ALLOWED_ROLES = ["user", "admin", "management", "finance"];
 const isManagement = (user) => user?.role === "management";
 const isFinance = (user) => user?.role === "finance";
+const isAdmin = (user) => user?.role === "admin";
 const canViewAllLists = (user) => isManagement(user) || isFinance(user);
+const canManageCategories = (user) =>
+  isManagement(user) || isFinance(user) || isAdmin(user);
 
 const requireManagement = (req, res, next) => {
   if (!isManagement(req.user)) {
     return res.status(403).json({ success: false, error: "Management access required" });
+  }
+  next();
+};
+
+const requireCategoryAdmin = (req, res, next) => {
+  if (!canManageCategories(req.user)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Category admin access required" });
   }
   next();
 };
@@ -180,6 +192,190 @@ app.post("/api/auth/login", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+const {
+  categoryValue,
+  mapCategoryRow,
+} = require("./database/categories");
+
+// Categories — readable by any authenticated user; CRUD for finance/admin/management
+app.get("/api/categories", authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories ORDER BY sort_order ASC, id ASC",
+    );
+    res.json({
+      success: true,
+      categories: rows.map(mapCategoryRow),
+    });
+  } catch (error) {
+    console.error("Error loading categories:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post(
+  "/api/categories",
+  authenticateToken,
+  requireCategoryAdmin,
+  async (req, res) => {
+    try {
+      const name_id = String(req.body.name_id || "").trim();
+      const name_zh = String(req.body.name_zh || "").trim();
+
+      if (!name_id || !name_zh) {
+        return res.status(400).json({
+          success: false,
+          error: "Both Indonesian and Chinese names are required",
+        });
+      }
+
+      const [existing] = await db.query(
+        "SELECT id FROM categories WHERE name_id = ? OR name_zh = ?",
+        [name_id, name_zh],
+      );
+      if (existing.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Category name already exists",
+        });
+      }
+
+      const [maxRows] = await db.query(
+        "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM categories",
+      );
+      const sort_order = Number(maxRows[0]?.max_sort || 0) + 1;
+
+      const [result] = await db.query(
+        "INSERT INTO categories (name_id, name_zh, sort_order) VALUES (?, ?, ?)",
+        [name_id, name_zh, sort_order],
+      );
+
+      const [rows] = await db.query(
+        "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories WHERE id = ?",
+        [result.insertId],
+      );
+
+      res.json({ success: true, category: mapCategoryRow(rows[0]) });
+    } catch (error) {
+      console.error("Error creating category:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.put(
+  "/api/categories/:id",
+  authenticateToken,
+  requireCategoryAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const name_id = String(req.body.name_id || "").trim();
+      const name_zh = String(req.body.name_zh || "").trim();
+
+      if (!name_id || !name_zh) {
+        return res.status(400).json({
+          success: false,
+          error: "Both Indonesian and Chinese names are required",
+        });
+      }
+
+      const [existing] = await db.query(
+        "SELECT id, name_id, name_zh FROM categories WHERE id = ?",
+        [id],
+      );
+      if (existing.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Category not found" });
+      }
+
+      const [dupes] = await db.query(
+        "SELECT id FROM categories WHERE (name_id = ? OR name_zh = ?) AND id <> ?",
+        [name_id, name_zh, id],
+      );
+      if (dupes.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Category name already exists",
+        });
+      }
+
+      const oldValue = categoryValue(existing[0].name_id, existing[0].name_zh);
+      const newValue = categoryValue(name_id, name_zh);
+
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.query(
+          "UPDATE categories SET name_id = ?, name_zh = ? WHERE id = ?",
+          [name_id, name_zh, id],
+        );
+        if (oldValue !== newValue) {
+          await connection.query(
+            "UPDATE entries SET category = ? WHERE category = ?",
+            [newValue, oldValue],
+          );
+        }
+        await connection.commit();
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+
+      const [rows] = await db.query(
+        "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories WHERE id = ?",
+        [id],
+      );
+
+      res.json({ success: true, category: mapCategoryRow(rows[0]) });
+    } catch (error) {
+      console.error("Error updating category:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.delete(
+  "/api/categories/:id",
+  authenticateToken,
+  requireCategoryAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [existing] = await db.query(
+        "SELECT id, name_id, name_zh FROM categories WHERE id = ?",
+        [id],
+      );
+      if (existing.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Category not found" });
+      }
+
+      const value = categoryValue(existing[0].name_id, existing[0].name_zh);
+      const [inUse] = await db.query(
+        "SELECT COUNT(*) AS c FROM entries WHERE category = ?",
+        [value],
+      );
+      if (Number(inUse[0]?.c) > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Category is used by existing entries and cannot be deleted",
+        });
+      }
+
+      await db.query("DELETE FROM categories WHERE id = ?", [id]);
+      res.json({ success: true, message: "Category deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting category:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
 
 // Analytics: management/finance see all; other roles see only their own lists
 app.get(

@@ -8,6 +8,7 @@ import {
   Menu,
   Receipt,
   BarChart3,
+  Tags,
   UserRound,
   Users,
   X,
@@ -31,6 +32,9 @@ const user = computed(() => {
 });
 
 const isManagement = computed(() => user.value.role === "management");
+const canManageCategories = computed(() =>
+  ["management", "finance", "admin"].includes(user.value.role),
+);
 
 const navItems = computed(() => {
   const items = [
@@ -42,6 +46,14 @@ const navItems = computed(() => {
       exact: true,
     },
   ];
+  if (canManageCategories.value) {
+    items.push({
+      to: "/categories",
+      label: t("navCategories"),
+      icon: Tags,
+      exact: true,
+    });
+  }
   if (isManagement.value) {
     items.push({
       to: "/users",

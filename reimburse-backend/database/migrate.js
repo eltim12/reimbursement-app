@@ -111,7 +111,21 @@ async function migrate(existingDb = null) {
     `);
     console.log("✓ entries table");
 
-    const required = ["users", "lists", "entries"];
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name_id VARCHAR(255) NOT NULL,
+        name_zh VARCHAR(255) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_categories_name_id (name_id),
+        INDEX idx_sort_order (sort_order)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log("✓ categories table");
+
+    const required = ["users", "lists", "entries", "categories"];
     for (const table of required) {
       if (!(await tableExists(db, table))) {
         throw new Error(`Required table missing after migrate: ${table}`);

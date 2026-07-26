@@ -22,9 +22,9 @@ import SelectItem from "@/components/ui/SelectItem.vue";
 import SelectTrigger from "@/components/ui/SelectTrigger.vue";
 import SelectValue from "@/components/ui/SelectValue.vue";
 import { useI18n } from "@/composables/useI18n";
+import { useCategories } from "@/composables/useCategories";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
-import { CATEGORIES, isKnownCategory } from "@/utils/categories";
 import {
   formatCurrency,
   parseCurrencyAmount,
@@ -34,8 +34,14 @@ import { exportPDF } from "@/utils/pdfExport";
 
 const route = useRoute();
 const router = useRouter();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const { showToast } = useToast();
+const {
+  categoryItems,
+  loadCategories,
+  getCategoryLabel,
+  isKnownCategory,
+} = useCategories();
 
 const currentUser = computed(() => {
   try {
@@ -50,15 +56,6 @@ const currencyItems = computed(() => [
   { label: "IDR", value: "IDR" },
   { label: "RMB", value: "RMB" },
 ]);
-
-const categoryItems = computed(() =>
-  CATEGORIES.map((c) => ({
-    value: c.value,
-    label: locale.value === "zh" ? `${c.zh} / ${c.id}` : `${c.id} / ${c.zh}`,
-    id: c.id,
-    zh: c.zh,
-  })),
-);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -505,7 +502,10 @@ watch(
   { immediate: false },
 );
 
-onMounted(() => loadList(route.params.id));
+onMounted(async () => {
+  await loadCategories();
+  await loadList(route.params.id);
+});
 </script>
 
 <template>
@@ -638,7 +638,7 @@ onMounted(() => loadList(route.params.id));
                   </td>
                   <td class="whitespace-nowrap px-4 py-3">{{ entry.Date }}</td>
                   <td class="whitespace-nowrap px-4 py-3 font-medium">
-                    {{ entry.Category }}
+                    {{ getCategoryLabel(entry.Category) }}
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-neutral-600">
                     {{ entry.Note || "—" }}
@@ -855,7 +855,9 @@ onMounted(() => loadList(route.params.id));
         </div>
         <div class="flex justify-between gap-4">
           <span class="text-neutral-500">{{ t("category") }}</span>
-          <span class="font-medium">{{ deleteEntryDetails.category }}</span>
+          <span class="font-medium">{{
+            getCategoryLabel(deleteEntryDetails.category)
+          }}</span>
         </div>
         <div class="flex justify-between gap-4">
           <span class="text-neutral-500">{{ t("amount") }}</span>
