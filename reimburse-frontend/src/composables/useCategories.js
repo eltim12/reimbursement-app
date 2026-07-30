@@ -13,14 +13,18 @@ const loaded = ref(false);
 const loading = ref(false);
 let loadPromise = null;
 
-async function loadCategories(force = false) {
-  if (loaded.value && !force) return categories.value;
-  if (loadPromise && !force) return loadPromise;
+async function loadCategories(force = false, companyId = undefined) {
+  if (loaded.value && !force && companyId === undefined) return categories.value;
+  if (loadPromise && !force && companyId === undefined) return loadPromise;
 
   loading.value = true;
   loadPromise = (async () => {
     try {
-      const response = await api.getCategories();
+      const params = {};
+      if (companyId !== undefined && companyId !== null && companyId !== "") {
+        params.companyId = companyId;
+      }
+      const response = await api.getCategories(params);
       if (response.success && Array.isArray(response.categories)) {
         categories.value = response.categories.map(normalizeCategory);
         loaded.value = true;

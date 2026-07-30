@@ -61,6 +61,7 @@ const loadProfile = async () => {
           email: response.user.email,
           name: response.user.name,
           role: response.user.role,
+          company_id: response.user.company_id ?? stored.company_id ?? null,
         }),
       );
     }

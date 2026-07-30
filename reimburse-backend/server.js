@@ -61,7 +61,7 @@ const authenticateToken = (req, res, next) => {
 
     try {
       const [users] = await db.query(
-        "SELECT id, email, role FROM users WHERE id = ?",
+        "SELECT id, email, role, company_id FROM users WHERE id = ?",
         [decoded.id],
       );
       if (users.length === 0) {
@@ -71,6 +71,7 @@ const authenticateToken = (req, res, next) => {
         id: users[0].id,
         email: users[0].email,
         role: users[0].role || "user",
+        company_id: users[0].company_id ?? null,
       };
       next();
     } catch (error) {
@@ -81,16 +82,24 @@ const authenticateToken = (req, res, next) => {
 };
 
 const ALLOWED_ROLES = ["user", "admin", "management", "finance"];
+const isSuperadmin = (user) => user?.role === "superadmin";
 const isManagement = (user) => user?.role === "management";
 const isFinance = (user) => user?.role === "finance";
 const isAdmin = (user) => user?.role === "admin";
-const canViewAllLists = (user) => isManagement(user) || isFinance(user);
+const canViewAllLists = (user) =>
+  isSuperadmin(user) ||
+  ((isManagement(user) || isFinance(user)) && !!user?.company_id);
 const canManageCategories = (user) =>
-  isManagement(user) || isFinance(user) || isAdmin(user);
+  isSuperadmin(user) ||
+  ((isManagement(user) || isFinance(user) || isAdmin(user)) &&
+    !!user?.company_id);
 
 const requireManagement = (req, res, next) => {
-  if (!isManagement(req.user)) {
-    return res.status(403).json({ success: false, error: "Management access required" });
+  if (isSuperadmin(req.user)) return next();
+  if (!isManagement(req.user) || !req.user.company_id) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Management access required" });
   }
   next();
 };
@@ -104,9 +113,70 @@ const requireCategoryAdmin = (req, res, next) => {
   next();
 };
 
-// Analytics for management + finance (all data) and normal users (own data only)
-// Auth is enough; scoping is enforced in the handler.
-const requireAnalyticsAccess = (req, res, next) => next();
+const requireSuperadmin = (req, res, next) => {
+  if (!isSuperadmin(req.user)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Superadmin access required" });
+  }
+  next();
+};
+
+/** Company members or platform superadmin (cross-tenant viewers). */
+const requireCompanyUser = (req, res, next) => {
+  if (isSuperadmin(req.user)) return next();
+  if (!req.user.company_id) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Company membership required" });
+  }
+  next();
+};
+
+const requireAnalyticsAccess = (req, res, next) => {
+  if (isSuperadmin(req.user)) return next();
+  if (!req.user.company_id) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Analytics access required" });
+  }
+  next();
+};
+
+/**
+ * Resolve optional company scope.
+ * Superadmin: query/body companyId (null = all companies).
+ * Others: always own company_id.
+ */
+const resolveCompanyFilter = (req, { required = false } = {}) => {
+  if (isSuperadmin(req.user)) {
+    const raw =
+      req.query?.companyId ??
+      req.body?.company_id ??
+      req.body?.companyId ??
+      null;
+    if (raw === undefined || raw === null || raw === "") {
+      if (required) {
+        return { error: "company_id is required" };
+      }
+      return { companyId: null };
+    }
+    const companyId = Number(raw);
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      return { error: "Invalid company_id" };
+    }
+    return { companyId };
+  }
+  if (!req.user.company_id) {
+    return { error: "Company membership required" };
+  }
+  return { companyId: req.user.company_id };
+};
+
+const { categoryValue, mapCategoryRow, seedCategoriesForCompany } = require(
+  "./database/categories",
+);
+const { slugify } = require("./database/companies");
 
 // Routes
 
@@ -115,45 +185,18 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Reimbursement API is running" });
 });
 
-// Auth Routes
-app.post("/api/auth/register", async (req, res) => {
-  try {
-    const { email, password, name } = req.body;
-
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Email and password are required" });
-    }
-
-    // Check if user exists
-    const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
-      email,
-    ]);
-    if (existing.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const [result] = await db.query(
-      "INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)",
-      [email, hashedPassword, name || "", "user"],
-    );
-
-    res.json({ success: true, message: "User registered successfully" });
-  } catch (error) {
-    console.error("Registration error:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+// Auth Routes — public employee signup disabled (management creates users)
+app.post("/api/auth/register", (_req, res) => {
+  return res.status(403).json({
+    success: false,
+    error: "Public registration is disabled. Ask your company management to create an account.",
+  });
 });
 
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
     const [users] = await db.query("SELECT * FROM users WHERE email = ?", [
       email,
     ]);
@@ -171,9 +214,11 @@ app.post("/api/auth/login", async (req, res) => {
         .json({ success: false, error: "Invalid email or password" });
     }
 
-    // Generate Token
+    const role = user.role || "user";
+    const company_id = user.company_id ?? null;
+
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role || "user" },
+      { id: user.id, email: user.email, role, company_id },
       JWT_SECRET,
     );
 
@@ -184,7 +229,8 @@ app.post("/api/auth/login", async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role || "user",
+        role,
+        company_id,
       },
     });
   } catch (error) {
@@ -193,26 +239,53 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-const {
-  categoryValue,
-  mapCategoryRow,
-} = require("./database/categories");
+// Categories — company-scoped (superadmin: optional companyId filter)
+app.get(
+  "/api/categories",
+  authenticateToken,
+  requireCompanyUser,
+  async (req, res) => {
+    try {
+      const scope = resolveCompanyFilter(req);
+      if (scope.error) {
+        return res.status(400).json({ success: false, error: scope.error });
+      }
 
-// Categories — readable by any authenticated user; CRUD for finance/admin/management
-app.get("/api/categories", authenticateToken, async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories ORDER BY sort_order ASC, id ASC",
-    );
-    res.json({
-      success: true,
-      categories: rows.map(mapCategoryRow),
-    });
-  } catch (error) {
-    console.error("Error loading categories:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+      let rows;
+      if (scope.companyId == null) {
+        [rows] = await db.query(
+          `SELECT c.id, c.company_id, c.name_id, c.name_zh, c.sort_order,
+                  c.created_at, c.updated_at, co.name AS company_name
+           FROM categories c
+           LEFT JOIN companies co ON co.id = c.company_id
+           ORDER BY co.name ASC, c.sort_order ASC, c.id ASC`,
+        );
+      } else {
+        [rows] = await db.query(
+          `SELECT c.id, c.company_id, c.name_id, c.name_zh, c.sort_order,
+                  c.created_at, c.updated_at, co.name AS company_name
+           FROM categories c
+           LEFT JOIN companies co ON co.id = c.company_id
+           WHERE c.company_id = ?
+           ORDER BY c.sort_order ASC, c.id ASC`,
+          [scope.companyId],
+        );
+      }
+
+      res.json({
+        success: true,
+        companyId: scope.companyId,
+        categories: rows.map((row) => ({
+          ...mapCategoryRow(row),
+          company_name: row.company_name || null,
+        })),
+      });
+    } catch (error) {
+      console.error("Error loading categories:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
 
 app.post(
   "/api/categories",
@@ -220,6 +293,11 @@ app.post(
   requireCategoryAdmin,
   async (req, res) => {
     try {
+      const scope = resolveCompanyFilter(req, { required: true });
+      if (scope.error) {
+        return res.status(400).json({ success: false, error: scope.error });
+      }
+      const companyId = scope.companyId;
       const name_id = String(req.body.name_id || "").trim();
       const name_zh = String(req.body.name_zh || "").trim();
 
@@ -231,8 +309,9 @@ app.post(
       }
 
       const [existing] = await db.query(
-        "SELECT id FROM categories WHERE name_id = ? OR name_zh = ?",
-        [name_id, name_zh],
+        `SELECT id FROM categories
+         WHERE company_id = ? AND (name_id = ? OR name_zh = ?)`,
+        [companyId, name_id, name_zh],
       );
       if (existing.length > 0) {
         return res.status(400).json({
@@ -242,18 +321,22 @@ app.post(
       }
 
       const [maxRows] = await db.query(
-        "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM categories",
+        `SELECT COALESCE(MAX(sort_order), 0) AS max_sort
+         FROM categories WHERE company_id = ?`,
+        [companyId],
       );
       const sort_order = Number(maxRows[0]?.max_sort || 0) + 1;
 
       const [result] = await db.query(
-        "INSERT INTO categories (name_id, name_zh, sort_order) VALUES (?, ?, ?)",
-        [name_id, name_zh, sort_order],
+        `INSERT INTO categories (company_id, name_id, name_zh, sort_order)
+         VALUES (?, ?, ?, ?)`,
+        [companyId, name_id, name_zh, sort_order],
       );
 
       const [rows] = await db.query(
-        "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories WHERE id = ?",
-        [result.insertId],
+        `SELECT id, company_id, name_id, name_zh, sort_order, created_at, updated_at
+         FROM categories WHERE id = ? AND company_id = ?`,
+        [result.insertId, companyId],
       );
 
       res.json({ success: true, category: mapCategoryRow(rows[0]) });
@@ -281,19 +364,31 @@ app.put(
         });
       }
 
-      const [existing] = await db.query(
-        "SELECT id, name_id, name_zh FROM categories WHERE id = ?",
-        [id],
-      );
+      let existing;
+      if (isSuperadmin(req.user)) {
+        [existing] = await db.query(
+          "SELECT id, company_id, name_id, name_zh FROM categories WHERE id = ?",
+          [id],
+        );
+      } else {
+        [existing] = await db.query(
+          `SELECT id, company_id, name_id, name_zh FROM categories
+           WHERE id = ? AND company_id = ?`,
+          [id, req.user.company_id],
+        );
+      }
       if (existing.length === 0) {
         return res
           .status(404)
           .json({ success: false, error: "Category not found" });
       }
 
+      const companyId = existing[0].company_id;
+
       const [dupes] = await db.query(
-        "SELECT id FROM categories WHERE (name_id = ? OR name_zh = ?) AND id <> ?",
-        [name_id, name_zh, id],
+        `SELECT id FROM categories
+         WHERE company_id = ? AND (name_id = ? OR name_zh = ?) AND id <> ?`,
+        [companyId, name_id, name_zh, id],
       );
       if (dupes.length > 0) {
         return res.status(400).json({
@@ -309,13 +404,18 @@ app.put(
       try {
         await connection.beginTransaction();
         await connection.query(
-          "UPDATE categories SET name_id = ?, name_zh = ? WHERE id = ?",
-          [name_id, name_zh, id],
+          `UPDATE categories SET name_id = ?, name_zh = ?
+           WHERE id = ? AND company_id = ?`,
+          [name_id, name_zh, id, companyId],
         );
         if (oldValue !== newValue) {
           await connection.query(
-            "UPDATE entries SET category = ? WHERE category = ?",
-            [newValue, oldValue],
+            `UPDATE entries e
+             INNER JOIN lists l ON l.id = e.list_id
+             INNER JOIN users u ON u.id = l.user_id
+             SET e.category = ?
+             WHERE e.category = ? AND u.company_id = ?`,
+            [newValue, oldValue, companyId],
           );
         }
         await connection.commit();
@@ -327,8 +427,9 @@ app.put(
       }
 
       const [rows] = await db.query(
-        "SELECT id, name_id, name_zh, sort_order, created_at, updated_at FROM categories WHERE id = ?",
-        [id],
+        `SELECT id, company_id, name_id, name_zh, sort_order, created_at, updated_at
+         FROM categories WHERE id = ? AND company_id = ?`,
+        [id, companyId],
       );
 
       res.json({ success: true, category: mapCategoryRow(rows[0]) });
@@ -346,20 +447,34 @@ app.delete(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const [existing] = await db.query(
-        "SELECT id, name_id, name_zh FROM categories WHERE id = ?",
-        [id],
-      );
+      let existing;
+      if (isSuperadmin(req.user)) {
+        [existing] = await db.query(
+          "SELECT id, company_id, name_id, name_zh FROM categories WHERE id = ?",
+          [id],
+        );
+      } else {
+        [existing] = await db.query(
+          `SELECT id, company_id, name_id, name_zh FROM categories
+           WHERE id = ? AND company_id = ?`,
+          [id, req.user.company_id],
+        );
+      }
       if (existing.length === 0) {
         return res
           .status(404)
           .json({ success: false, error: "Category not found" });
       }
 
+      const companyId = existing[0].company_id;
       const value = categoryValue(existing[0].name_id, existing[0].name_zh);
       const [inUse] = await db.query(
-        "SELECT COUNT(*) AS c FROM entries WHERE category = ?",
-        [value],
+        `SELECT COUNT(*) AS c
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         INNER JOIN users u ON u.id = l.user_id
+         WHERE e.category = ? AND u.company_id = ?`,
+        [value, companyId],
       );
       if (Number(inUse[0]?.c) > 0) {
         return res.status(400).json({
@@ -368,7 +483,10 @@ app.delete(
         });
       }
 
-      await db.query("DELETE FROM categories WHERE id = ?", [id]);
+      await db.query("DELETE FROM categories WHERE id = ? AND company_id = ?", [
+        id,
+        companyId,
+      ]);
       res.json({ success: true, message: "Category deleted successfully" });
     } catch (error) {
       console.error("Error deleting category:", error);
@@ -377,18 +495,31 @@ app.delete(
   },
 );
 
-// Analytics: management/finance see all; other roles see only their own lists
+// Analytics: company users scoped; superadmin all or by companyId
 app.get(
   "/api/analytics",
   authenticateToken,
   requireAnalyticsAccess,
   async (req, res) => {
     try {
+      const scope = resolveCompanyFilter(req);
+      if (scope.error) {
+        return res.status(400).json({ success: false, error: scope.error });
+      }
+      const companyId = scope.companyId;
       const { category, dateFrom, dateTo, ownerId } = req.query;
       const scopedToSelf = !canViewAllLists(req.user);
 
       const where = [];
       const params = [];
+
+      if (companyId != null) {
+        where.push("u.company_id = ?");
+        params.push(companyId);
+      } else if (!isSuperadmin(req.user)) {
+        where.push("u.company_id = ?");
+        params.push(req.user.company_id);
+      }
 
       if (category) {
         where.push("e.category = ?");
@@ -403,7 +534,6 @@ app.get(
         params.push(dateTo);
       }
 
-      // Normal users cannot query other owners — always force own user_id.
       if (scopedToSelf) {
         where.push("l.user_id = ?");
         params.push(req.user.id);
@@ -421,6 +551,7 @@ app.get(
            COUNT(DISTINCT e.list_id) AS list_count
          FROM entries e
          INNER JOIN lists l ON l.id = e.list_id
+         INNER JOIN users u ON u.id = l.user_id
          ${whereSql}`,
         params,
       );
@@ -432,6 +563,7 @@ app.get(
            COUNT(e.id) AS entry_count
          FROM entries e
          INNER JOIN lists l ON l.id = e.list_id
+         INNER JOIN users u ON u.id = l.user_id
          ${whereSql}
          GROUP BY e.category
          ORDER BY total_amount DESC, e.category ASC`,
@@ -449,10 +581,13 @@ app.get(
            l.name AS list_name,
            u.id AS owner_id,
            u.name AS owner_name,
-           u.email AS owner_email
+           u.email AS owner_email,
+           u.company_id AS company_id,
+           co.name AS company_name
          FROM entries e
          INNER JOIN lists l ON l.id = e.list_id
-         LEFT JOIN users u ON u.id = l.user_id
+         INNER JOIN users u ON u.id = l.user_id
+         LEFT JOIN companies co ON co.id = u.company_id
          ${whereSql}
          ORDER BY e.date DESC, e.id DESC
          LIMIT 500`,
@@ -462,15 +597,26 @@ app.get(
       let owners = [];
       if (scopedToSelf) {
         const [selfRows] = await db.query(
-          "SELECT id, name, email FROM users WHERE id = ?",
+          "SELECT id, name, email, company_id FROM users WHERE id = ?",
           [req.user.id],
         );
         owners = selfRows;
-      } else {
+      } else if (companyId != null) {
         const [ownerRows] = await db.query(
-          `SELECT DISTINCT u.id, u.name, u.email
+          `SELECT DISTINCT u.id, u.name, u.email, u.company_id
            FROM users u
            INNER JOIN lists l ON l.user_id = u.id
+           WHERE u.company_id = ?
+           ORDER BY u.name ASC, u.email ASC`,
+          [companyId],
+        );
+        owners = ownerRows;
+      } else {
+        const [ownerRows] = await db.query(
+          `SELECT DISTINCT u.id, u.name, u.email, u.company_id
+           FROM users u
+           INNER JOIN lists l ON l.user_id = u.id
+           WHERE u.company_id IS NOT NULL
            ORDER BY u.name ASC, u.email ASC`,
         );
         owners = ownerRows;
@@ -481,6 +627,7 @@ app.get(
       res.json({
         success: true,
         scopedToSelf,
+        companyId,
         summary: {
           totalAmount: parseFloat(summary.total_amount) || 0,
           entryCount: Number(summary.entry_count) || 0,
@@ -502,11 +649,14 @@ app.get(
           ownerId: entry.owner_id,
           ownerName: entry.owner_name || "",
           ownerEmail: entry.owner_email || "",
+          companyId: entry.company_id,
+          companyName: entry.company_name || "",
         })),
         owners: owners.map((owner) => ({
           id: owner.id,
           name: owner.name || "",
           email: owner.email,
+          companyId: owner.company_id ?? null,
         })),
       });
     } catch (error) {
@@ -516,20 +666,46 @@ app.get(
   },
 );
 
-// Management: list all users
+// Management / superadmin: list users (optional companyId for superadmin)
 app.get("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {
   try {
-    const [users] = await db.query(
-      "SELECT id, email, name, role, created_at, updated_at FROM users ORDER BY created_at DESC",
-    );
+    const scope = resolveCompanyFilter(req);
+    if (scope.error) {
+      return res.status(400).json({ success: false, error: scope.error });
+    }
+
+    let users;
+    if (scope.companyId == null) {
+      [users] = await db.query(
+        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.created_at, u.updated_at,
+                c.name AS company_name
+         FROM users u
+         LEFT JOIN companies c ON c.id = u.company_id
+         WHERE u.role <> 'superadmin'
+         ORDER BY c.name ASC, u.created_at DESC`,
+      );
+    } else {
+      [users] = await db.query(
+        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.created_at, u.updated_at,
+                c.name AS company_name
+         FROM users u
+         LEFT JOIN companies c ON c.id = u.company_id
+         WHERE u.company_id = ?
+         ORDER BY u.created_at DESC`,
+        [scope.companyId],
+      );
+    }
 
     res.json({
       success: true,
+      companyId: scope.companyId,
       users: users.map((user) => ({
         id: user.id,
         email: user.email,
         name: user.name || "",
         role: user.role || "user",
+        company_id: user.company_id,
+        company_name: user.company_name || null,
         createdAt: user.created_at,
         updatedAt: user.updated_at,
       })),
@@ -540,10 +716,23 @@ app.get("/api/admin/users", authenticateToken, requireManagement, async (req, re
   }
 });
 
-// Management: create user
+// Create user (management: own company; superadmin: any company via company_id)
 app.post("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
+    const scope = resolveCompanyFilter(req, { required: true });
+    if (scope.error) {
+      return res.status(400).json({ success: false, error: scope.error });
+    }
+    const companyId = scope.companyId;
+
+    const [companies] = await db.query(
+      "SELECT id FROM companies WHERE id = ?",
+      [companyId],
+    );
+    if (companies.length === 0) {
+      return res.status(400).json({ success: false, error: "Company not found" });
+    }
 
     if (!email || !password) {
       return res
@@ -560,6 +749,13 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
       });
     }
 
+    if (role === "superadmin") {
+      return res.status(403).json({
+        success: false,
+        error: "Cannot create superadmin via this endpoint",
+      });
+    }
+
     const nextRole = ALLOWED_ROLES.includes(role) ? role : "user";
 
     const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
@@ -573,8 +769,8 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await db.query(
-      "INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)",
-      [email.trim(), hashedPassword, (name || "").trim(), nextRole],
+      "INSERT INTO users (email, password, name, role, company_id) VALUES (?, ?, ?, ?, ?)",
+      [email.trim(), hashedPassword, (name || "").trim(), nextRole, companyId],
     );
 
     res.json({
@@ -584,6 +780,7 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
         email: email.trim(),
         name: (name || "").trim(),
         role: nextRole,
+        company_id: companyId,
       },
     });
   } catch (error) {
@@ -592,13 +789,24 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
   }
 });
 
-// Management: update user
+// Update user
 app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req, res) => {
   try {
     const { id } = req.params;
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, company_id: bodyCompanyId } = req.body;
 
-    const [users] = await db.query("SELECT id, role FROM users WHERE id = ?", [id]);
+    let users;
+    if (isSuperadmin(req.user)) {
+      [users] = await db.query(
+        "SELECT id, role, company_id FROM users WHERE id = ? AND role <> 'superadmin'",
+        [id],
+      );
+    } else {
+      [users] = await db.query(
+        "SELECT id, role, company_id FROM users WHERE id = ? AND company_id = ?",
+        [id, req.user.company_id],
+      );
+    }
     if (users.length === 0) {
       return res.status(404).json({ success: false, error: "User not found" });
     }
@@ -613,7 +821,25 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
       return res.status(400).json({ success: false, error: "Name is required" });
     }
 
+    if (role === "superadmin") {
+      return res.status(403).json({
+        success: false,
+        error: "Cannot assign superadmin role",
+      });
+    }
+
     const nextRole = ALLOWED_ROLES.includes(role) ? role : users[0].role || "user";
+    let companyId = users[0].company_id;
+    if (isSuperadmin(req.user) && bodyCompanyId != null && bodyCompanyId !== "") {
+      companyId = Number(bodyCompanyId);
+      const [companies] = await db.query(
+        "SELECT id FROM companies WHERE id = ?",
+        [companyId],
+      );
+      if (companies.length === 0) {
+        return res.status(400).json({ success: false, error: "Company not found" });
+      }
+    }
 
     const [existing] = await db.query(
       "SELECT id FROM users WHERE email = ? AND id != ?",
@@ -634,13 +860,13 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
       }
       const hashedPassword = await bcrypt.hash(password, 10);
       await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ?, password = ? WHERE id = ?",
-        [email.trim(), name.trim(), nextRole, hashedPassword, id],
+        "UPDATE users SET email = ?, name = ?, role = ?, password = ?, company_id = ? WHERE id = ?",
+        [email.trim(), name.trim(), nextRole, hashedPassword, companyId, id],
       );
     } else {
       await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ? WHERE id = ?",
-        [email.trim(), name.trim(), nextRole, id],
+        "UPDATE users SET email = ?, name = ?, role = ?, company_id = ? WHERE id = ?",
+        [email.trim(), name.trim(), nextRole, companyId, id],
       );
     }
 
@@ -651,6 +877,7 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
         email: email.trim(),
         name: name.trim(),
         role: nextRole,
+        company_id: companyId,
       },
     });
   } catch (error) {
@@ -659,7 +886,7 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
   }
 });
 
-// Management: delete user
+// Delete user
 app.delete("/api/admin/users/:id", authenticateToken, requireManagement, async (req, res) => {
   try {
     const { id } = req.params;
@@ -670,7 +897,18 @@ app.delete("/api/admin/users/:id", authenticateToken, requireManagement, async (
         .json({ success: false, error: "Cannot delete your own account" });
     }
 
-    const [users] = await db.query("SELECT id FROM users WHERE id = ?", [id]);
+    let users;
+    if (isSuperadmin(req.user)) {
+      [users] = await db.query(
+        "SELECT id FROM users WHERE id = ? AND role <> 'superadmin'",
+        [id],
+      );
+    } else {
+      [users] = await db.query(
+        "SELECT id FROM users WHERE id = ? AND company_id = ?",
+        [id, req.user.company_id],
+      );
+    }
     if (users.length === 0) {
       return res.status(404).json({ success: false, error: "User not found" });
     }
@@ -687,7 +925,7 @@ app.delete("/api/admin/users/:id", authenticateToken, requireManagement, async (
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const [users] = await db.query(
-      "SELECT id, email, name, role, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, role, company_id, created_at FROM users WHERE id = ?",
       [req.user.id],
     );
 
@@ -703,6 +941,7 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
         email: user.email,
         name: user.name || "",
         role: user.role || "user",
+        company_id: user.company_id ?? null,
         createdAt: user.created_at,
       },
     });
@@ -771,6 +1010,7 @@ app.put("/api/users/profile", authenticateToken, async (req, res) => {
       email: email.trim(),
       name: name.trim(),
       role: currentRole,
+      company_id: req.user.company_id ?? null,
     };
 
     res.json({
@@ -811,21 +1051,82 @@ app.put("/api/users/name", authenticateToken, async (req, res) => {
   }
 });
 
+
+const findCompanyList = async (listId, companyId, { ownerId = null } = {}) => {
+  if (companyId == null) {
+    // Superadmin: any list
+    if (ownerId != null) {
+      const [rows] = await db.query(
+        "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+        [listId, ownerId],
+      );
+      return rows;
+    }
+    const [rows] = await db.query("SELECT id FROM lists WHERE id = ?", [listId]);
+    return rows;
+  }
+  if (ownerId != null) {
+    const [rows] = await db.query(
+      `SELECT l.id FROM lists l
+       INNER JOIN users u ON u.id = l.user_id
+       WHERE l.id = ? AND l.user_id = ? AND u.company_id = ?`,
+      [listId, ownerId, companyId],
+    );
+    return rows;
+  }
+  const [rows] = await db.query(
+    `SELECT l.id FROM lists l
+     INNER JOIN users u ON u.id = l.user_id
+     WHERE l.id = ? AND u.company_id = ?`,
+    [listId, companyId],
+  );
+  return rows;
+};
+
 // Get all lists (Protected)
-app.get("/api/lists", authenticateToken, async (req, res) => {
+app.get("/api/lists", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
+    const scope = resolveCompanyFilter(req);
+    if (scope.error) {
+      return res.status(400).json({ success: false, error: scope.error });
+    }
+
     let lists;
     if (canViewAllLists(req.user)) {
-      [lists] = await db.query(
-        `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
-                u.email AS owner_email, u.name AS owner_name
-         FROM lists l
-         LEFT JOIN users u ON u.id = l.user_id
-         ORDER BY l.created_at DESC`,
-      );
+      if (scope.companyId == null) {
+        [lists] = await db.query(
+          `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+                  u.email AS owner_email, u.name AS owner_name,
+                  u.company_id AS company_id, c.name AS company_name
+           FROM lists l
+           INNER JOIN users u ON u.id = l.user_id
+           LEFT JOIN companies c ON c.id = u.company_id
+           WHERE u.company_id IS NOT NULL
+           ORDER BY l.created_at DESC`,
+        );
+      } else {
+        [lists] = await db.query(
+          `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+                  u.email AS owner_email, u.name AS owner_name,
+                  u.company_id AS company_id, c.name AS company_name
+           FROM lists l
+           INNER JOIN users u ON u.id = l.user_id
+           LEFT JOIN companies c ON c.id = u.company_id
+           WHERE u.company_id = ?
+           ORDER BY l.created_at DESC`,
+          [scope.companyId],
+        );
+      }
     } else {
       [lists] = await db.query(
-        "SELECT id, name, total, created_at, updated_at, user_id FROM lists WHERE user_id = ? ORDER BY created_at DESC",
+        `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+                u.email AS owner_email, u.name AS owner_name,
+                u.company_id AS company_id, c.name AS company_name
+         FROM lists l
+         LEFT JOIN users u ON u.id = l.user_id
+         LEFT JOIN companies c ON c.id = u.company_id
+         WHERE l.user_id = ?
+         ORDER BY l.created_at DESC`,
         [req.user.id],
       );
     }
@@ -837,11 +1138,13 @@ app.get("/api/lists", authenticateToken, async (req, res) => {
       userId: list.user_id,
       ownerEmail: list.owner_email || null,
       ownerName: list.owner_name || null,
+      companyId: list.company_id ?? null,
+      companyName: list.company_name || null,
       createdAt: list.created_at.toISOString(),
       lastUpdated: list.updated_at.toISOString(),
     }));
 
-    res.json({ success: true, lists: formattedLists });
+    res.json({ success: true, companyId: scope.companyId, lists: formattedLists });
   } catch (error) {
     console.error("Error fetching lists:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -849,23 +1152,40 @@ app.get("/api/lists", authenticateToken, async (req, res) => {
 });
 
 // Get a specific list with entries (Protected)
-app.get("/api/lists/:id", authenticateToken, async (req, res) => {
+app.get("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
     const { id } = req.params;
 
     let lists;
-    if (canViewAllLists(req.user)) {
+    if (isSuperadmin(req.user)) {
       [lists] = await db.query(
         `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
-                u.email AS owner_email, u.name AS owner_name
+                u.email AS owner_email, u.name AS owner_name,
+                u.company_id AS company_id, c.name AS company_name
          FROM lists l
-         LEFT JOIN users u ON u.id = l.user_id
+         INNER JOIN users u ON u.id = l.user_id
+         LEFT JOIN companies c ON c.id = u.company_id
          WHERE l.id = ?`,
         [id],
       );
+    } else if (canViewAllLists(req.user)) {
+      [lists] = await db.query(
+        `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+                u.email AS owner_email, u.name AS owner_name,
+                u.company_id AS company_id, c.name AS company_name
+         FROM lists l
+         INNER JOIN users u ON u.id = l.user_id
+         LEFT JOIN companies c ON c.id = u.company_id
+         WHERE l.id = ? AND u.company_id = ?`,
+        [id, req.user.company_id],
+      );
     } else {
       [lists] = await db.query(
-        "SELECT id, name, total, created_at, updated_at, user_id FROM lists WHERE id = ? AND user_id = ?",
+        `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+                NULL AS owner_email, NULL AS owner_name,
+                NULL AS company_id, NULL AS company_name
+         FROM lists l
+         WHERE l.id = ? AND l.user_id = ?`,
         [id, req.user.id],
       );
     }
@@ -876,7 +1196,6 @@ app.get("/api/lists/:id", authenticateToken, async (req, res) => {
 
     const list = lists[0];
 
-    // Get entries
     const [entries] = await db.query(
       "SELECT id, date, category, note, amount, proof_image, created_at FROM entries WHERE list_id = ? ORDER BY created_at ASC",
       [id],
@@ -900,6 +1219,8 @@ app.get("/api/lists/:id", authenticateToken, async (req, res) => {
         userId: list.user_id,
         ownerEmail: list.owner_email || null,
         ownerName: list.owner_name || null,
+        companyId: list.company_id ?? null,
+        companyName: list.company_name || null,
         entries: formattedEntries,
         createdAt: list.created_at.toISOString(),
         lastUpdated: list.updated_at.toISOString(),
@@ -912,9 +1233,9 @@ app.get("/api/lists/:id", authenticateToken, async (req, res) => {
 });
 
 // Create a new list (Protected)
-app.post("/api/lists", authenticateToken, async (req, res) => {
+app.post("/api/lists", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
-    if (isManagement(req.user) || isFinance(req.user)) {
+    if (isManagement(req.user) || isFinance(req.user) || isSuperadmin(req.user)) {
       return res.status(403).json({
         success: false,
         error: "This role cannot create lists",
@@ -949,7 +1270,7 @@ app.post("/api/lists", authenticateToken, async (req, res) => {
 });
 
 // Update a list (Protected)
-app.put("/api/lists/:id", authenticateToken, async (req, res) => {
+app.put("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, entries, total } = req.body;
@@ -961,13 +1282,17 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
       });
     }
 
-    // Verify ownership (management can access any list)
-    const [lists] = await db.query(
-      isManagement(req.user)
-        ? "SELECT id FROM lists WHERE id = ?"
-        : "SELECT id FROM lists WHERE id = ? AND user_id = ?",
-      isManagement(req.user) ? [id] : [id, req.user.id],
-    );
+    // Verify ownership (management/superadmin can access lists in scope)
+    let lists;
+    if (isSuperadmin(req.user)) {
+      lists = await findCompanyList(id, null);
+    } else if (isManagement(req.user)) {
+      lists = await findCompanyList(id, req.user.company_id);
+    } else {
+      lists = await findCompanyList(id, req.user.company_id, {
+        ownerId: req.user.id,
+      });
+    }
     if (lists.length === 0)
       return res.status(404).json({ success: false, error: "List not found" });
 
@@ -1061,7 +1386,7 @@ app.put("/api/lists/:id", authenticateToken, async (req, res) => {
 });
 
 // Delete a list (Protected)
-app.delete("/api/lists/:id", authenticateToken, async (req, res) => {
+app.delete("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1072,13 +1397,17 @@ app.delete("/api/lists/:id", authenticateToken, async (req, res) => {
       });
     }
 
-    // Verify ownership (management can delete any list)
-    const [lists] = await db.query(
-      isManagement(req.user)
-        ? "SELECT id FROM lists WHERE id = ?"
-        : "SELECT id FROM lists WHERE id = ? AND user_id = ?",
-      isManagement(req.user) ? [id] : [id, req.user.id],
-    );
+    // Verify ownership (management/superadmin can delete lists in scope)
+    let lists;
+    if (isSuperadmin(req.user)) {
+      lists = await findCompanyList(id, null);
+    } else if (isManagement(req.user)) {
+      lists = await findCompanyList(id, req.user.company_id);
+    } else {
+      lists = await findCompanyList(id, req.user.company_id, {
+        ownerId: req.user.id,
+      });
+    }
     if (lists.length === 0)
       return res.status(404).json({ success: false, error: "List not found" });
 
@@ -1123,8 +1452,352 @@ app.delete("/api/lists/:id", authenticateToken, async (req, res) => {
   }
 });
 
+
+// ---------- Superadmin: companies ----------
+app.get(
+  "/api/superadmin/companies",
+  authenticateToken,
+  requireSuperadmin,
+  async (_req, res) => {
+    try {
+      const [rows] = await db.query(
+        `SELECT c.id, c.name, c.slug, c.created_at, c.updated_at,
+                (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS user_count,
+                (SELECT COUNT(*) FROM categories cat WHERE cat.company_id = c.id) AS category_count
+         FROM companies c
+         ORDER BY c.created_at DESC`,
+      );
+      res.json({
+        success: true,
+        companies: rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          userCount: Number(row.user_count) || 0,
+          categoryCount: Number(row.category_count) || 0,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        })),
+      });
+    } catch (error) {
+      console.error("Error listing companies:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.post(
+  "/api/superadmin/companies",
+  authenticateToken,
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const name = String(req.body.name || "").trim();
+      let slug = String(req.body.slug || "").trim().toLowerCase();
+      if (!name) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Company name is required" });
+      }
+      if (!slug) slug = slugify(name);
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+        return res.status(400).json({
+          success: false,
+          error: "Slug must be lowercase letters, numbers, and hyphens",
+        });
+      }
+
+      const [dupes] = await db.query(
+        "SELECT id FROM companies WHERE slug = ?",
+        [slug],
+      );
+      if (dupes.length > 0) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Company slug already exists" });
+      }
+
+      const [result] = await db.query(
+        "INSERT INTO companies (name, slug) VALUES (?, ?)",
+        [name, slug],
+      );
+      await seedCategoriesForCompany(db, result.insertId);
+
+      const [rows] = await db.query(
+        "SELECT id, name, slug, created_at, updated_at FROM companies WHERE id = ?",
+        [result.insertId],
+      );
+      res.json({
+        success: true,
+        company: {
+          id: rows[0].id,
+          name: rows[0].name,
+          slug: rows[0].slug,
+          createdAt: rows[0].created_at,
+          updatedAt: rows[0].updated_at,
+        },
+      });
+    } catch (error) {
+      console.error("Error creating company:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.get(
+  "/api/superadmin/companies/:id",
+  authenticateToken,
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [rows] = await db.query(
+        "SELECT id, name, slug, created_at, updated_at FROM companies WHERE id = ?",
+        [id],
+      );
+      if (rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Company not found" });
+      }
+      const [users] = await db.query(
+        `SELECT id, email, name, role, created_at
+         FROM users WHERE company_id = ?
+         ORDER BY role ASC, email ASC`,
+        [id],
+      );
+      res.json({
+        success: true,
+        company: {
+          id: rows[0].id,
+          name: rows[0].name,
+          slug: rows[0].slug,
+          createdAt: rows[0].created_at,
+          updatedAt: rows[0].updated_at,
+          users: users.map((u) => ({
+            id: u.id,
+            email: u.email,
+            name: u.name || "",
+            role: u.role || "user",
+            createdAt: u.created_at,
+          })),
+        },
+      });
+    } catch (error) {
+      console.error("Error getting company:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.put(
+  "/api/superadmin/companies/:id",
+  authenticateToken,
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const name = String(req.body.name || "").trim();
+      let slug = String(req.body.slug || "").trim().toLowerCase();
+
+      const [existing] = await db.query(
+        "SELECT id FROM companies WHERE id = ?",
+        [id],
+      );
+      if (existing.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Company not found" });
+      }
+      if (!name) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Company name is required" });
+      }
+      if (!slug) slug = slugify(name);
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+        return res.status(400).json({
+          success: false,
+          error: "Slug must be lowercase letters, numbers, and hyphens",
+        });
+      }
+
+      const [dupes] = await db.query(
+        "SELECT id FROM companies WHERE slug = ? AND id <> ?",
+        [slug, id],
+      );
+      if (dupes.length > 0) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Company slug already exists" });
+      }
+
+      await db.query("UPDATE companies SET name = ?, slug = ? WHERE id = ?", [
+        name,
+        slug,
+        id,
+      ]);
+      res.json({
+        success: true,
+        company: { id: Number(id), name, slug },
+      });
+    } catch (error) {
+      console.error("Error updating company:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.delete(
+  "/api/superadmin/companies/:id",
+  authenticateToken,
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [existing] = await db.query(
+        "SELECT id, slug FROM companies WHERE id = ?",
+        [id],
+      );
+      if (existing.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Company not found" });
+      }
+      if (existing[0].slug === "whtb") {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot delete the default WHTB company",
+        });
+      }
+
+      const [userCount] = await db.query(
+        "SELECT COUNT(*) AS c FROM users WHERE company_id = ?",
+        [id],
+      );
+      if (Number(userCount[0]?.c) > 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Company still has users; remove them first",
+        });
+      }
+
+      await db.query("DELETE FROM categories WHERE company_id = ?", [id]);
+      await db.query("DELETE FROM companies WHERE id = ?", [id]);
+      res.json({ success: true, message: "Company deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting company:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
+
+app.post(
+  "/api/superadmin/companies/:id/bootstrap",
+  authenticateToken,
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [companies] = await db.query(
+        "SELECT id, name FROM companies WHERE id = ?",
+        [id],
+      );
+      if (companies.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Company not found" });
+      }
+
+      const management = req.body.management || {};
+      const finance = req.body.finance || {};
+      const created = [];
+
+      async function upsertRoleUser(payload, role) {
+        const email = String(payload.email || "").trim();
+        const password = String(payload.password || "");
+        const name = String(payload.name || "").trim();
+        if (!email || !password) {
+          throw new Error(`${role} email and password are required`);
+        }
+        if (!/.+@.+\..+/.test(email)) {
+          throw new Error(`${role} email must be valid`);
+        }
+        if (password.length < 6) {
+          throw new Error(`${role} password must be at least 6 characters`);
+        }
+
+        const [existing] = await db.query(
+          "SELECT id, company_id, role FROM users WHERE email = ?",
+          [email],
+        );
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        if (existing.length > 0) {
+          if (
+            existing[0].company_id &&
+            Number(existing[0].company_id) !== Number(id)
+          ) {
+            throw new Error(
+              `${email} already belongs to another company`,
+            );
+          }
+          if (existing[0].role === "superadmin") {
+            throw new Error(`${email} is a superadmin and cannot be reassigned`);
+          }
+          await db.query(
+            `UPDATE users
+             SET password = ?, name = ?, role = ?, company_id = ?
+             WHERE id = ?`,
+            [hashedPassword, name || role, role, id, existing[0].id],
+          );
+          created.push({
+            id: existing[0].id,
+            email,
+            name: name || role,
+            role,
+            updated: true,
+          });
+          return;
+        }
+
+        const [result] = await db.query(
+          `INSERT INTO users (email, password, name, role, company_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [email, hashedPassword, name || role, role, id],
+        );
+        created.push({
+          id: result.insertId,
+          email,
+          name: name || role,
+          role,
+          updated: false,
+        });
+      }
+
+      await upsertRoleUser(management, "management");
+      await upsertRoleUser(finance, "finance");
+      await seedCategoriesForCompany(db, Number(id));
+
+      res.json({
+        success: true,
+        companyId: Number(id),
+        users: created,
+      });
+    } catch (error) {
+      console.error("Error bootstrapping company:", error);
+      const status = /required|valid|another company|superadmin/i.test(
+        error.message || "",
+      )
+        ? 400
+        : 500;
+      res.status(status).json({ success: false, error: error.message });
+    }
+  },
+);
+
 // Upload image
-app.post("/api/upload-image", upload.single("image"), async (req, res) => {
+app.post("/api/upload-image", authenticateToken, requireCompanyUser, upload.single("image"), async (req, res) => {
   try {
     if (!req.file) {
       return res
@@ -1151,34 +1824,61 @@ app.post("/api/upload-image", upload.single("image"), async (req, res) => {
 });
 
 // Delete an entry (helper endpoint)
-app.delete("/api/entries/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
+app.delete(
+  "/api/entries/:id",
+  authenticateToken,
+  requireCompanyUser,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
 
-    // Get entry to find image
-    const [entries] = await db.query(
-      "SELECT proof_image FROM entries WHERE id = ?",
-      [id],
-    );
+      const [entries] = await db.query(
+        `SELECT e.id, e.proof_image, l.user_id, u.company_id
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         INNER JOIN users u ON u.id = l.user_id
+         WHERE e.id = ?`,
+        [id],
+      );
 
-    if (entries.length === 0) {
-      return res.status(404).json({ success: false, error: "Entry not found" });
+      if (entries.length === 0) {
+        return res.status(404).json({ success: false, error: "Entry not found" });
+      }
+
+      const entry = entries[0];
+      if (
+        !isSuperadmin(req.user) &&
+        Number(entry.company_id) !== Number(req.user.company_id)
+      ) {
+        return res.status(404).json({ success: false, error: "Entry not found" });
+      }
+      if (
+        !isSuperadmin(req.user) &&
+        !isManagement(req.user) &&
+        Number(entry.user_id) !== Number(req.user.id)
+      ) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
+      if (isFinance(req.user)) {
+        return res.status(403).json({
+          success: false,
+          error: "Finance users have read-only access",
+        });
+      }
+
+      await db.query("DELETE FROM entries WHERE id = ?", [id]);
+
+      if (entry.proof_image) {
+        await deleteImage(entry.proof_image);
+      }
+
+      res.json({ success: true, message: "Entry deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting entry:", error);
+      res.status(500).json({ success: false, error: error.message });
     }
-
-    // Delete entry
-    await db.query("DELETE FROM entries WHERE id = ?", [id]);
-
-    // Delete image if exists
-    if (entries[0].proof_image) {
-      await deleteImage(entries[0].proof_image);
-    }
-
-    res.json({ success: true, message: "Entry deleted successfully" });
-  } catch (error) {
-    console.error("Error deleting entry:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+  },
+);
 
 // Apply schema migrations + system user seeds on startup (idempotent)
 async function setupDatabaseOnStartup() {

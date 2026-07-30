@@ -29,6 +29,7 @@ import SelectTrigger from "@/components/ui/SelectTrigger.vue";
 import SelectValue from "@/components/ui/SelectValue.vue";
 import { useI18n } from "@/composables/useI18n";
 import { useCategories } from "@/composables/useCategories";
+import { useCompanies } from "@/composables/useCompanies";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import { exportAnalyticsExcel } from "@/utils/excelExport";
@@ -43,6 +44,7 @@ const {
   loadCategories,
   getCategoryLabel,
 } = useCategories();
+const { companyFilterItems, loadCompanies } = useCompanies();
 
 const currentUser = computed(() => {
   try {
@@ -52,8 +54,10 @@ const currentUser = computed(() => {
   }
 });
 
+const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
 const canAccess = computed(() => !!currentUser.value?.id || !!currentUser.value?.email);
 const canFilterOwners = computed(() =>
+  isSuperadmin.value ||
   ["management", "finance"].includes(currentUser.value.role),
 );
 
@@ -70,6 +74,7 @@ const sortKey = ref("date");
 const sortDir = ref("desc");
 
 const filters = ref({
+  companyId: "",
   category: "",
   dateFrom: "",
   dateTo: "",
@@ -140,6 +145,12 @@ const sortedEntries = computed(() => {
 
 const filtersLabel = computed(() => {
   const parts = [];
+  if (filters.value.companyId) {
+    const company = companyFilterItems.value.find(
+      (item) => String(item.value) === String(filters.value.companyId),
+    );
+    parts.push(`${t("filterCompany")}: ${company?.label || filters.value.companyId}`);
+  }
   if (filters.value.category) {
     parts.push(
       `${t("category")}: ${getCategoryLabel(filters.value.category)}`,
@@ -181,11 +192,18 @@ const loadAnalytics = async () => {
   try {
     loading.value = true;
     const params = {};
+    if (isSuperadmin.value && filters.value.companyId) {
+      params.companyId = filters.value.companyId;
+    }
     if (filters.value.category) params.category = filters.value.category;
     if (filters.value.dateFrom) params.dateFrom = filters.value.dateFrom;
     if (filters.value.dateTo) params.dateTo = filters.value.dateTo;
     if (canFilterOwners.value && filters.value.ownerId) {
       params.ownerId = filters.value.ownerId;
+    }
+
+    if (isSuperadmin.value) {
+      await loadCategories(true, filters.value.companyId || undefined);
     }
 
     const response = await api.getAnalytics(params);
@@ -208,6 +226,7 @@ const loadAnalytics = async () => {
 
 const resetFilters = async () => {
   filters.value = {
+    companyId: "",
     category: "",
     dateFrom: "",
     dateTo: "",
@@ -274,7 +293,10 @@ const handleExportExcel = async () => {
 };
 
 onMounted(async () => {
-  await loadCategories();
+  if (isSuperadmin.value) {
+    await loadCompanies();
+  }
+  await loadCategories(true, filters.value.companyId || undefined);
   await loadAnalytics();
 });
 </script>
@@ -292,6 +314,30 @@ onMounted(async () => {
       <Card>
         <CardContent class="space-y-4 p-5">
           <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div v-if="isSuperadmin" class="space-y-2 sm:col-span-2">
+              <Label>{{ t("filterCompany") }}</Label>
+              <Select
+                :model-value="filters.companyId"
+                :items="companyFilterItems"
+                :placeholder="t('filterAllCompanies')"
+                @update:model-value="(v) => (filters.companyId = v ?? '')"
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="item in companyFilterItems"
+                      :key="item.value || 'all-companies'"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
             <div class="space-y-2 sm:col-span-2">
               <Label>{{ t("filterCategory") }}</Label>
               <Combobox

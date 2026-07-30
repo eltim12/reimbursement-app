@@ -18,6 +18,7 @@ import SelectGroup from "@/components/ui/SelectGroup.vue";
 import SelectItem from "@/components/ui/SelectItem.vue";
 import SelectTrigger from "@/components/ui/SelectTrigger.vue";
 import SelectValue from "@/components/ui/SelectValue.vue";
+import { useCompanies } from "@/composables/useCompanies";
 import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
@@ -25,6 +26,7 @@ import api from "@/services/api";
 const router = useRouter();
 const { t } = useI18n();
 const { showToast } = useToast();
+const { companyFilterItems, loadCompanies, companies } = useCompanies();
 
 const currentUser = computed(() => {
   try {
@@ -35,11 +37,16 @@ const currentUser = computed(() => {
 });
 
 const isManagement = computed(() => currentUser.value.role === "management");
+const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
+const canManageUsers = computed(
+  () => isManagement.value || isSuperadmin.value,
+);
 
 const loading = ref(false);
 const saving = ref(false);
 const users = ref([]);
 const search = ref("");
+const companyFilter = ref("");
 const showModal = ref(false);
 const editingId = ref(null);
 const showDeleteModal = ref(false);
@@ -52,6 +59,7 @@ const form = ref({
   role: "user",
   password: "",
   confirmPassword: "",
+  company_id: "",
 });
 
 const roleItems = computed(() => [
@@ -61,6 +69,10 @@ const roleItems = computed(() => [
   { label: t("roleFinance"), value: "finance" },
 ]);
 
+const companyFormItems = computed(() =>
+  companies.value.map((c) => ({ value: String(c.id), label: c.name })),
+);
+
 const filteredUsers = computed(() => {
   const q = search.value.trim().toLowerCase();
   if (!q) return users.value;
@@ -68,7 +80,8 @@ const filteredUsers = computed(() => {
     (user) =>
       user.email.toLowerCase().includes(q) ||
       (user.name || "").toLowerCase().includes(q) ||
-      (user.role || "").toLowerCase().includes(q),
+      (user.role || "").toLowerCase().includes(q) ||
+      (user.company_name || "").toLowerCase().includes(q),
   );
 });
 
@@ -83,12 +96,17 @@ const emptyForm = () => ({
   role: "user",
   password: "",
   confirmPassword: "",
+  company_id: companyFilter.value || "",
 });
 
 const loadUsers = async () => {
   try {
     loading.value = true;
-    const response = await api.getAdminUsers();
+    const params = {};
+    if (isSuperadmin.value && companyFilter.value) {
+      params.companyId = companyFilter.value;
+    }
+    const response = await api.getAdminUsers(params);
     if (response.success) {
       users.value = response.users;
     }
@@ -116,6 +134,7 @@ const openEdit = (user) => {
     role: user.role || "user",
     password: "",
     confirmPassword: "",
+    company_id: user.company_id != null ? String(user.company_id) : "",
   };
   showModal.value = true;
 };
@@ -133,6 +152,10 @@ const saveUser = async () => {
   }
   if (!form.value.name.trim()) {
     showToast(t("nameRequired"), "error");
+    return;
+  }
+  if (isSuperadmin.value && !form.value.company_id) {
+    showToast(t("selectCompanyFirst"), "error");
     return;
   }
   if (!editingId.value && !form.value.password) {
@@ -158,6 +181,9 @@ const saveUser = async () => {
       role: form.value.role,
     };
     if (form.value.password) payload.password = form.value.password;
+    if (isSuperadmin.value && form.value.company_id) {
+      payload.company_id = Number(form.value.company_id);
+    }
 
     if (editingId.value) {
       await api.updateAdminUser(editingId.value, payload);
@@ -213,12 +239,15 @@ const confirmDeleteUser = async () => {
   }
 };
 
-onMounted(() => {
-  if (!isManagement.value) {
+onMounted(async () => {
+  if (!canManageUsers.value) {
     router.replace("/");
     return;
   }
-  loadUsers();
+  if (isSuperadmin.value) {
+    await loadCompanies();
+  }
+  await loadUsers();
 });
 </script>
 
@@ -254,15 +283,46 @@ onMounted(() => {
         </Card>
       </div>
 
-      <div class="relative max-w-md">
-        <Search
-          class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
-        />
-        <Input
-          v-model="search"
-          class="h-11 pl-9"
-          :placeholder="t('searchUsers')"
-        />
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
+          <Label>{{ t("filterCompany") }}</Label>
+          <Select
+            :model-value="companyFilter"
+            :items="companyFilterItems"
+            :placeholder="t('filterAllCompanies')"
+            @update:model-value="
+              async (v) => {
+                companyFilter = v ?? '';
+                await loadUsers();
+              }
+            "
+          >
+            <SelectTrigger class="h-11">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem
+                  v-for="item in companyFilterItems"
+                  :key="item.value || 'all-companies'"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="relative w-full max-w-md">
+          <Search
+            class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
+          />
+          <Input
+            v-model="search"
+            class="h-11 pl-9"
+            :placeholder="t('searchUsers')"
+          />
+        </div>
       </div>
 
       <Card class="overflow-hidden p-0">
@@ -275,6 +335,12 @@ onMounted(() => {
                 </th>
                 <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                   {{ t("email") }}
+                </th>
+                <th
+                  v-if="isSuperadmin"
+                  class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500"
+                >
+                  {{ t("filterCompany") }}
                 </th>
                 <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                   {{ t("role") }}
@@ -291,12 +357,18 @@ onMounted(() => {
             </thead>
             <tbody>
               <tr v-if="loading">
-                <td colspan="5" class="px-4 py-8 text-center text-neutral-500">
+                <td
+                  :colspan="isSuperadmin ? 6 : 5"
+                  class="px-4 py-8 text-center text-neutral-500"
+                >
                   Loading…
                 </td>
               </tr>
               <tr v-else-if="filteredUsers.length === 0">
-                <td colspan="5" class="px-4 py-8 text-center text-neutral-500">
+                <td
+                  :colspan="isSuperadmin ? 6 : 5"
+                  class="px-4 py-8 text-center text-neutral-500"
+                >
                   {{ t("noUsers") }}
                 </td>
               </tr>
@@ -309,6 +381,12 @@ onMounted(() => {
                   {{ user.name || "—" }}
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">{{ user.email }}</td>
+                <td
+                  v-if="isSuperadmin"
+                  class="whitespace-nowrap px-4 py-3 text-neutral-600"
+                >
+                  {{ user.company_name || "—" }}
+                </td>
                 <td class="whitespace-nowrap px-4 py-3">
                   {{ roleLabel(user.role) }}
                 </td>
@@ -359,6 +437,30 @@ onMounted(() => {
         <div class="space-y-2">
           <Label for="user-email">{{ t("email") }}</Label>
           <Input id="user-email" v-model="form.email" type="email" required />
+        </div>
+        <div v-if="isSuperadmin" class="space-y-2">
+          <Label>{{ t("filterCompany") }}</Label>
+          <Select
+            :model-value="form.company_id"
+            :items="companyFormItems"
+            :placeholder="t('selectCompanyFirst')"
+            @update:model-value="(v) => (form.company_id = v ?? '')"
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem
+                  v-for="item in companyFormItems"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
         <div class="space-y-2">
           <Label>{{ t("role") }}</Label>

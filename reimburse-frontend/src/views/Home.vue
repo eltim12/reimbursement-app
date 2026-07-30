@@ -12,13 +12,21 @@ import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
+import Select from "@/components/ui/Select.vue";
+import SelectContent from "@/components/ui/SelectContent.vue";
+import SelectGroup from "@/components/ui/SelectGroup.vue";
+import SelectItem from "@/components/ui/SelectItem.vue";
+import SelectTrigger from "@/components/ui/SelectTrigger.vue";
+import SelectValue from "@/components/ui/SelectValue.vue";
 import { useI18n } from "@/composables/useI18n";
+import { useCompanies } from "@/composables/useCompanies";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 
 const router = useRouter();
 const { t } = useI18n();
 const { showToast } = useToast();
+const { companyFilterItems, loadCompanies } = useCompanies();
 
 const currentUser = computed(() => {
   try {
@@ -29,16 +37,18 @@ const currentUser = computed(() => {
 });
 const isManagement = computed(() => currentUser.value.role === "management");
 const isFinance = computed(() => currentUser.value.role === "finance");
+const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
 const canViewAllLists = computed(
-  () => isManagement.value || isFinance.value,
+  () => isManagement.value || isFinance.value || isSuperadmin.value,
 );
 const canCreateLists = computed(
-  () => !isManagement.value && !isFinance.value,
+  () => !isManagement.value && !isFinance.value && !isSuperadmin.value,
 );
 const canDeleteLists = computed(() => !isFinance.value);
 const listTableColspan = computed(() => {
   let cols = 2; // name + createdAt
   if (canViewAllLists.value) cols += 1;
+  if (isSuperadmin.value) cols += 1;
   if (canDeleteLists.value) cols += 1;
   return cols;
 });
@@ -47,6 +57,7 @@ const loading = ref(false);
 const lists = ref([]);
 const newListName = ref("");
 const search = ref("");
+const companyFilter = ref("");
 const showDeleteModal = ref(false);
 const pendingDeleteList = ref(null);
 const deleting = ref(false);
@@ -70,7 +81,11 @@ const filteredLists = computed(() => {
 const loadLists = async () => {
   try {
     loading.value = true;
-    const response = await api.getLists();
+    const params = {};
+    if (isSuperadmin.value && companyFilter.value) {
+      params.companyId = companyFilter.value;
+    }
+    const response = await api.getLists(params);
     if (response.success) {
       lists.value = response.lists
         .map((list) => ({
@@ -79,6 +94,7 @@ const loadLists = async () => {
           createdAt: list.createdAt,
           ownerName: list.ownerName,
           ownerEmail: list.ownerEmail,
+          companyName: list.companyName,
           total: list.total,
         }))
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -146,7 +162,12 @@ const confirmDeleteList = async () => {
   }
 };
 
-onMounted(loadLists);
+onMounted(async () => {
+  if (isSuperadmin.value) {
+    await loadCompanies();
+  }
+  await loadLists();
+});
 </script>
 
 <template>
@@ -202,15 +223,46 @@ onMounted(loadLists);
       </Card>
 
       <div class="space-y-3">
-        <div class="relative max-w-md">
-          <Search
-            class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
-          />
-          <Input
-            v-model="search"
-            class="h-11 pl-9"
-            :placeholder="t('searchLists')"
-          />
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
+            <Label>{{ t("filterCompany") }}</Label>
+            <Select
+              :model-value="companyFilter"
+              :items="companyFilterItems"
+              :placeholder="t('filterAllCompanies')"
+              @update:model-value="
+                async (v) => {
+                  companyFilter = v ?? '';
+                  await loadLists();
+                }
+              "
+            >
+              <SelectTrigger class="h-11">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="item in companyFilterItems"
+                    :key="item.value || 'all-companies'"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="relative w-full max-w-md">
+            <Search
+              class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
+            />
+            <Input
+              v-model="search"
+              class="h-11 pl-9"
+              :placeholder="t('searchLists')"
+            />
+          </div>
         </div>
 
         <Card class="overflow-hidden p-0">
@@ -220,6 +272,12 @@ onMounted(loadLists);
                 <tr class="text-left">
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     {{ t("newListName") }}
+                  </th>
+                  <th
+                    v-if="isSuperadmin"
+                    class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500"
+                  >
+                    {{ t("filterCompany") }}
                   </th>
                   <th
                     v-if="canViewAllLists"
@@ -263,6 +321,12 @@ onMounted(loadLists);
                 >
                   <td class="whitespace-nowrap px-4 py-3 font-medium text-neutral-900">
                     {{ list.name }}
+                  </td>
+                  <td
+                    v-if="isSuperadmin"
+                    class="whitespace-nowrap px-4 py-3 text-neutral-600"
+                  >
+                    {{ list.companyName || "—" }}
                   </td>
                   <td
                     v-if="canViewAllLists"

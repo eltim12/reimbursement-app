@@ -11,6 +11,7 @@ import {
   Tags,
   UserRound,
   Users,
+  Building2,
   X,
 } from "@lucide/vue";
 import LangToggle from "@/components/LangToggle.vue";
@@ -32,11 +33,57 @@ const user = computed(() => {
 });
 
 const isManagement = computed(() => user.value.role === "management");
+const isSuperadmin = computed(() => user.value.role === "superadmin");
 const canManageCategories = computed(() =>
   ["management", "finance", "admin"].includes(user.value.role),
 );
 
 const navItems = computed(() => {
+  if (isSuperadmin.value) {
+    const items = [
+      {
+        to: "/superadmin/companies",
+        label: t("navCompanies"),
+        icon: Building2,
+        exact: true,
+      },
+      { to: "/", label: t("navHome"), icon: LayoutDashboard, exact: true },
+      {
+        to: "/analytics",
+        label: t("navAnalytics"),
+        icon: BarChart3,
+        exact: true,
+      },
+      {
+        to: "/categories",
+        label: t("navCategories"),
+        icon: Tags,
+        exact: true,
+      },
+      {
+        to: "/users",
+        label: t("navUsers"),
+        icon: Users,
+        exact: true,
+      },
+    ];
+    if (route.name === "ListDetail" && route.params.id) {
+      items.push({
+        to: `/lists/${route.params.id}`,
+        label: t("navList"),
+        icon: FileText,
+        exact: false,
+      });
+    }
+    items.push({
+      to: "/profile",
+      label: t("navProfile"),
+      icon: UserRound,
+      exact: true,
+    });
+    return items;
+  }
+
   const items = [
     { to: "/", label: t("navHome"), icon: LayoutDashboard, exact: true },
     {

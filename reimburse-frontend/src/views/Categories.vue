@@ -12,7 +12,15 @@ import Field from "@/components/ui/Field.vue";
 import FieldDescription from "@/components/ui/FieldDescription.vue";
 import FieldLabel from "@/components/ui/FieldLabel.vue";
 import Input from "@/components/ui/Input.vue";
+import Label from "@/components/ui/Label.vue";
+import Select from "@/components/ui/Select.vue";
+import SelectContent from "@/components/ui/SelectContent.vue";
+import SelectGroup from "@/components/ui/SelectGroup.vue";
+import SelectItem from "@/components/ui/SelectItem.vue";
+import SelectTrigger from "@/components/ui/SelectTrigger.vue";
+import SelectValue from "@/components/ui/SelectValue.vue";
 import { useCategories } from "@/composables/useCategories";
+import { useCompanies } from "@/composables/useCompanies";
 import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
@@ -21,6 +29,7 @@ const router = useRouter();
 const { t, locale } = useI18n();
 const { showToast } = useToast();
 const { loadCategories, getCategoryLabel } = useCategories();
+const { companyFilterItems, loadCompanies } = useCompanies();
 
 const currentUser = computed(() => {
   try {
@@ -30,7 +39,9 @@ const currentUser = computed(() => {
   }
 });
 
+const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
 const canManage = computed(() =>
+  isSuperadmin.value ||
   ["management", "finance", "admin"].includes(currentUser.value.role),
 );
 
@@ -38,6 +49,7 @@ const loading = ref(false);
 const saving = ref(false);
 const categories = ref([]);
 const search = ref("");
+const companyFilter = ref("");
 const showModal = ref(false);
 const editingId = ref(null);
 const showDeleteModal = ref(false);
@@ -53,7 +65,8 @@ const filteredCategories = computed(() => {
   return categories.value.filter(
     (c) =>
       c.name_id.toLowerCase().includes(q) ||
-      c.name_zh.toLowerCase().includes(q),
+      c.name_zh.toLowerCase().includes(q) ||
+      (c.company_name || "").toLowerCase().includes(q),
   );
 });
 
@@ -62,10 +75,14 @@ const emptyForm = () => ({ name_id: "", name_zh: "" });
 const load = async () => {
   try {
     loading.value = true;
-    const response = await api.getCategories();
+    const params = {};
+    if (isSuperadmin.value && companyFilter.value) {
+      params.companyId = companyFilter.value;
+    }
+    const response = await api.getCategories(params);
     if (response.success) {
       categories.value = response.categories || [];
-      await loadCategories(true);
+      await loadCategories(true, companyFilter.value || undefined);
     }
   } catch (error) {
     showToast(
@@ -117,6 +134,10 @@ const validateForm = () => {
 
 const saveCategory = async () => {
   if (!validateForm()) return;
+  if (isSuperadmin.value && !companyFilter.value && !editingId.value) {
+    showToast(t("selectCompanyFirst"), "error");
+    return;
+  }
 
   try {
     saving.value = true;
@@ -124,6 +145,9 @@ const saveCategory = async () => {
       name_id: form.value.name_id.trim(),
       name_zh: form.value.name_zh.trim(),
     };
+    if (isSuperadmin.value && companyFilter.value) {
+      payload.company_id = Number(companyFilter.value);
+    }
 
     if (editingId.value) {
       const response = await api.updateCategory(editingId.value, payload);
@@ -181,6 +205,9 @@ onMounted(async () => {
     router.replace("/");
     return;
   }
+  if (isSuperadmin.value) {
+    await loadCompanies();
+  }
   await load();
 });
 </script>
@@ -203,21 +230,58 @@ onMounted(async () => {
 
       <Card>
         <CardContent class="space-y-4 p-5">
-          <div class="relative max-w-md">
-            <Search
-              class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
-            />
-            <Input
-              v-model="search"
-              class="pl-9"
-              :placeholder="t('searchCategories')"
-            />
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
+              <Label>{{ t("filterCompany") }}</Label>
+              <Select
+                :model-value="companyFilter"
+                :items="companyFilterItems"
+                :placeholder="t('filterAllCompanies')"
+                @update:model-value="
+                  async (v) => {
+                    companyFilter = v ?? '';
+                    await load();
+                  }
+                "
+              >
+                <SelectTrigger class="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="item in companyFilterItems"
+                      :key="item.value || 'all-companies'"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="relative w-full max-w-md">
+              <Search
+                class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
+              />
+              <Input
+                v-model="search"
+                class="h-11 pl-9"
+                :placeholder="t('searchCategories')"
+              />
+            </div>
           </div>
 
           <div class="overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
                 <tr class="text-left">
+                  <th
+                    v-if="isSuperadmin"
+                    class="px-4 py-3 font-medium text-neutral-500"
+                  >
+                    {{ t("filterCompany") }}
+                  </th>
                   <th class="px-4 py-3 font-medium text-neutral-500">
                     {{ t("categoryNameId") }}
                   </th>
@@ -234,12 +298,18 @@ onMounted(async () => {
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="4" class="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    :colspan="isSuperadmin ? 5 : 4"
+                    class="px-4 py-8 text-center text-neutral-500"
+                  >
                     Loading…
                   </td>
                 </tr>
                 <tr v-else-if="filteredCategories.length === 0">
-                  <td colspan="4" class="px-4 py-8 text-center text-neutral-500">
+                  <td
+                    :colspan="isSuperadmin ? 5 : 4"
+                    class="px-4 py-8 text-center text-neutral-500"
+                  >
                     <div class="inline-flex items-center gap-2">
                       <Tags class="h-4 w-4" />
                       {{ t("noCategories") }}
@@ -251,6 +321,12 @@ onMounted(async () => {
                   :key="category.id"
                   class="border-b border-neutral-100 last:border-0"
                 >
+                  <td
+                    v-if="isSuperadmin"
+                    class="whitespace-nowrap px-4 py-3 text-neutral-600"
+                  >
+                    {{ category.company_name || "—" }}
+                  </td>
                   <td class="px-4 py-3 font-medium text-neutral-900">
                     {{ category.name_id }}
                   </td>

@@ -1,5 +1,5 @@
 /**
- * Default bilingual categories (seeded when categories table is empty).
+ * Default bilingual categories (seeded per company when empty).
  * Stored entry value format: `${name_id} / ${name_zh}`
  */
 const DEFAULT_CATEGORIES = [
@@ -23,6 +23,7 @@ function mapCategoryRow(row) {
   const name_zh = row.name_zh;
   return {
     id: row.id,
+    company_id: row.company_id,
     name_id,
     name_zh,
     value: categoryValue(name_id, name_zh),
@@ -33,26 +34,45 @@ function mapCategoryRow(row) {
 }
 
 /**
- * Seed default categories only when the table is empty (idempotent).
+ * Seed default categories for a company when that company has none.
  */
-async function seedCategories(db) {
+async function seedCategoriesForCompany(db, companyId) {
+  if (!companyId) {
+    throw new Error("seedCategoriesForCompany requires companyId");
+  }
+
   const [countRows] = await db.query(
-    "SELECT COUNT(*) AS c FROM categories",
+    "SELECT COUNT(*) AS c FROM categories WHERE company_id = ?",
+    [companyId],
   );
   const count = Number(countRows[0]?.c) || 0;
   if (count > 0) {
-    console.log(`✓ categories already seeded (${count})`);
+    console.log(
+      `✓ categories already seeded for company ${companyId} (${count})`,
+    );
     return;
   }
 
   for (let i = 0; i < DEFAULT_CATEGORIES.length; i += 1) {
     const item = DEFAULT_CATEGORIES[i];
     await db.query(
-      "INSERT INTO categories (name_id, name_zh, sort_order) VALUES (?, ?, ?)",
-      [item.name_id, item.name_zh, i + 1],
+      "INSERT INTO categories (company_id, name_id, name_zh, sort_order) VALUES (?, ?, ?, ?)",
+      [companyId, item.name_id, item.name_zh, i + 1],
     );
   }
-  console.log(`✓ Seeded ${DEFAULT_CATEGORIES.length} categories`);
+  console.log(
+    `✓ Seeded ${DEFAULT_CATEGORIES.length} categories for company ${companyId}`,
+  );
+}
+
+/**
+ * Backward-compatible seed: attach to default company.
+ * Prefer seedCategoriesForCompany after companies exist.
+ */
+async function seedCategories(db) {
+  const { ensureDefaultCompany } = require("./companies");
+  const companyId = await ensureDefaultCompany(db);
+  await seedCategoriesForCompany(db, companyId);
 }
 
 module.exports = {
@@ -60,4 +80,5 @@ module.exports = {
   categoryValue,
   mapCategoryRow,
   seedCategories,
+  seedCategoriesForCompany,
 };

@@ -35,8 +35,8 @@ export default {
   },
 
   // Lists
-  async getLists() {
-    const response = await api.get("/lists");
+  async getLists(params = {}) {
+    const response = await api.get("/lists", { params });
     return response.data;
   },
 
@@ -102,8 +102,8 @@ export default {
   },
 
   // Management admin
-  async getAdminUsers() {
-    const response = await api.get("/admin/users");
+  async getAdminUsers(params = {}) {
+    const response = await api.get("/admin/users", { params });
     return response.data;
   },
 
@@ -129,8 +129,8 @@ export default {
   },
 
   // Categories
-  async getCategories() {
-    const response = await api.get("/categories");
+  async getCategories(params = {}) {
+    const response = await api.get("/categories", { params });
     return response.data;
   },
 
@@ -146,6 +146,40 @@ export default {
 
   async deleteCategory(id) {
     const response = await api.delete(`/categories/${id}`);
+    return response.data;
+  },
+
+  // Superadmin companies
+  async getCompanies() {
+    const response = await api.get("/superadmin/companies");
+    return response.data;
+  },
+
+  async createCompany(data) {
+    const response = await api.post("/superadmin/companies", data);
+    return response.data;
+  },
+
+  async getCompany(id) {
+    const response = await api.get(`/superadmin/companies/${id}`);
+    return response.data;
+  },
+
+  async updateCompany(id, data) {
+    const response = await api.put(`/superadmin/companies/${id}`, data);
+    return response.data;
+  },
+
+  async deleteCompany(id) {
+    const response = await api.delete(`/superadmin/companies/${id}`);
+    return response.data;
+  },
+
+  async bootstrapCompany(id, data) {
+    const response = await api.post(
+      `/superadmin/companies/${id}/bootstrap`,
+      data,
+    );
     return response.data;
   },
 };

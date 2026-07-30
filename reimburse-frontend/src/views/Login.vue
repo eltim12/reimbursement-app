@@ -39,7 +39,11 @@ const handleLogin = async () => {
     if (response.success) {
       localStorage.setItem("token", response.token);
       localStorage.setItem("user", JSON.stringify(response.user));
-      router.push("/");
+      if (response.user?.role === "superadmin") {
+        router.push("/superadmin/companies");
+      } else {
+        router.push("/");
+      }
     }
   } catch (error) {
     showToast(error.response?.data?.error || "Login failed", "error");
@@ -88,15 +92,6 @@ const handleLogin = async () => {
           <Button type="submit" class="h-11 w-full" :loading="loading">
             {{ t("signIn") }}
           </Button>
-          <p class="text-center text-sm text-neutral-500">
-            {{ t("dontHaveAccount") }}
-            <router-link
-              to="/register"
-              class="font-medium text-neutral-900 underline-offset-4 hover:underline"
-            >
-              {{ t("signUp") }}
-            </router-link>
-          </p>
         </form>
       </CardContent>
     </Card>

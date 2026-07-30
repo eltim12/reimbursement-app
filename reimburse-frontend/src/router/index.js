@@ -5,8 +5,8 @@ import Profile from "../views/Profile.vue";
 import Users from "../views/Users.vue";
 import Categories from "../views/Categories.vue";
 import Analytics from "../views/Analytics.vue";
+import Companies from "../views/Companies.vue";
 import Login from "../views/Login.vue";
-import Register from "../views/Register.vue";
 
 const routes = [
   {
@@ -31,7 +31,7 @@ const routes = [
     path: "/users",
     name: "Users",
     component: Users,
-    meta: { requiresAuth: true, requiresManagement: true },
+    meta: { requiresAuth: true, requiresUserAdmin: true },
   },
   {
     path: "/categories",
@@ -46,6 +46,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: "/superadmin/companies",
+    name: "Companies",
+    component: Companies,
+    meta: { requiresAuth: true, requiresSuperadmin: true },
+  },
+  {
     path: "/login",
     name: "Login",
     component: Login,
@@ -53,9 +59,7 @@ const routes = [
   },
   {
     path: "/register",
-    name: "Register",
-    component: Register,
-    meta: { guestOnly: true },
+    redirect: "/login",
   },
 ];
 
@@ -74,21 +78,38 @@ router.beforeEach((to, from, next) => {
     user = {};
   }
 
-  const canManageCategories = ["management", "finance", "admin"].includes(
-    user.role,
-  );
+  const isSuperadmin = user.role === "superadmin";
+  const canManageCategories =
+    isSuperadmin ||
+    ["management", "finance", "admin"].includes(user.role);
+  const canManageUsers = isSuperadmin || user.role === "management";
 
   if (to.meta.requiresAuth && !isAuthenticated) {
     next("/login");
-  } else if (to.meta.guestOnly && isAuthenticated) {
-    next("/");
-  } else if (to.meta.requiresManagement && user.role !== "management") {
-    next("/");
-  } else if (to.meta.requiresCategoryAdmin && !canManageCategories) {
-    next("/");
-  } else {
-    next();
+    return;
   }
+
+  if (to.meta.guestOnly && isAuthenticated) {
+    next(isSuperadmin ? "/superadmin/companies" : "/");
+    return;
+  }
+
+  if (to.meta.requiresSuperadmin && !isSuperadmin) {
+    next("/");
+    return;
+  }
+
+  if (to.meta.requiresUserAdmin && !canManageUsers) {
+    next("/");
+    return;
+  }
+
+  if (to.meta.requiresCategoryAdmin && !canManageCategories) {
+    next("/");
+    return;
+  }
+
+  next();
 });
 
 export default router;
