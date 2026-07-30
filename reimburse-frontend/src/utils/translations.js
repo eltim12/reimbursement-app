@@ -153,6 +153,17 @@ export const translations = {
     pleaseEnterValidAmount: "Harap masukkan jumlah yang valid",
     pleaseSelectDate: "Harap pilih tanggal",
     entryAdded: "Entri berhasil ditambahkan",
+    entryUpdated: "Entri berhasil diperbarui",
+    editEntry: "Ubah entri",
+    saveEntry: "Simpan entri",
+    failedToUpdateEntry: "Gagal memperbarui entri",
+    parsingReceipt: "Membaca struk…",
+    receiptOcrHint:
+      "Unggah struk untuk mengisi tanggal, jumlah, catatan, dan kategori secara otomatis. Anda masih bisa mengubahnya.",
+    receiptParsed: "Struk berhasil dibaca — periksa dan sesuaikan jika perlu",
+    receiptParsedEmpty:
+      "Struk terbaca, tetapi field tidak terdeteksi. Isi manual.",
+    receiptParseFailed: "Gagal membaca struk. Isi form secara manual.",
     duplicateEntryBlocked:
       "Entri dengan tanggal, jumlah, kategori, dan catatan yang sama sudah ada di daftar ini.",
     similarEntryTitle: "Entri mirip ditemukan",
@@ -361,6 +372,16 @@ export const translations = {
     pleaseEnterValidAmount: "请输入有效金额",
     pleaseSelectDate: "请选择日期",
     entryAdded: "条目添加成功",
+    entryUpdated: "条目已更新",
+    editEntry: "编辑条目",
+    saveEntry: "保存条目",
+    failedToUpdateEntry: "更新条目失败",
+    parsingReceipt: "正在识别收据…",
+    receiptOcrHint:
+      "上传收据可自动填写日期、金额、备注和类别。您仍可手动修改。",
+    receiptParsed: "收据识别成功 — 请核对并按需修改",
+    receiptParsedEmpty: "已识别收据，但未能提取字段。请手动填写。",
+    receiptParseFailed: "收据识别失败。请手动填写表单。",
     duplicateEntryBlocked:
       "此列表中已存在相同日期、金额、类别和备注的条目。",
     similarEntryTitle: "发现相似条目",

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ArrowLeft, FileDown, FileSpreadsheet, Plus, Trash2, X } from "@lucide/vue";
+import { ArrowLeft, FileDown, FileSpreadsheet, Pencil, Plus, Trash2, X } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import UploadImage from "@/components/UploadImage.vue";
 import Button from "@/components/ui/Button.vue";
@@ -59,6 +59,7 @@ const currencyItems = computed(() => [
 
 const loading = ref(false);
 const saving = ref(false);
+const parsingReceipt = ref(false);
 const exporting = ref(false);
 const exportingExcel = ref(false);
 const showNameModal = ref(false);
@@ -67,6 +68,8 @@ const showDeleteEntryModal = ref(false);
 const showSimilarEntryModal = ref(false);
 const pendingDeleteIndex = ref(null);
 const deletingEntry = ref(false);
+const editingEntryId = ref(null);
+const existingProofUrl = ref(null);
 let similarEntryResolver = null;
 const previewImageUrl = ref(null);
 const newUserName = ref("");
@@ -113,15 +116,105 @@ const clearEntryError = (field) => {
 
 const openEntryModal = () => {
   if (isReadOnly.value) return;
+  editingEntryId.value = null;
+  existingProofUrl.value = null;
   entryForm.value = emptyEntryForm();
+  clearEntryErrors();
+  showEntryModal.value = true;
+};
+
+const openEditEntry = (entry) => {
+  if (isReadOnly.value || !entry?.id) return;
+  editingEntryId.value = entry.id;
+  existingProofUrl.value = getProofUrl(entry.Proof);
+  const currency = entry.Currency || "IDR";
+  const amountNum = Number(entry.Amount) || 0;
+  entryForm.value = {
+    date: entry.Date || "",
+    category: entry.Category || "",
+    note: entry.Note || "",
+    amount:
+      currency === "IDR"
+        ? String(Math.round(amountNum)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
+        : String(amountNum),
+    currency,
+    proof: null,
+  };
   clearEntryErrors();
   showEntryModal.value = true;
 };
 
 const closeEntryModal = () => {
   showEntryModal.value = false;
+  editingEntryId.value = null;
+  existingProofUrl.value = null;
   entryForm.value = emptyEntryForm();
   clearEntryErrors();
+  parsingReceipt.value = false;
+};
+
+const formatAmountForCurrency = (amount, currency) => {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "";
+  if (currency === "IDR") {
+    return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  }
+  return String(n);
+};
+
+const applyOcrFields = (fields) => {
+  if (!fields) return;
+  if (fields.date) entryForm.value.date = fields.date;
+  if (fields.category && isKnownCategory(fields.category)) {
+    entryForm.value.category = fields.category;
+  }
+  if (fields.note) entryForm.value.note = fields.note;
+  if (fields.currency === "RMB" || fields.currency === "IDR") {
+    entryForm.value.currency = fields.currency;
+  }
+  if (fields.amount != null && Number(fields.amount) > 0) {
+    entryForm.value.amount = formatAmountForCurrency(
+      fields.amount,
+      entryForm.value.currency,
+    );
+  }
+  clearEntryErrors();
+};
+
+const handleProofAdded = async (fileObj) => {
+  const file = fileObj?.file;
+  if (!file || !(file instanceof File)) return;
+
+  try {
+    parsingReceipt.value = true;
+    const response = await api.parseReceipt(file);
+    if (response.success && response.fields) {
+      applyOcrFields(response.fields);
+      const filled = [
+        response.confidence?.date && "date",
+        response.confidence?.amount && "amount",
+        response.confidence?.note && "note",
+        response.confidence?.category && "category",
+      ].filter(Boolean);
+      if (filled.length) {
+        showToast(t("receiptParsed"), "success");
+      } else {
+        showToast(t("receiptParsedEmpty"), "warning");
+      }
+    }
+  } catch (error) {
+    console.error("OCR failed:", error);
+    showToast(
+      error.response?.data?.error || t("receiptParseFailed"),
+      "warning",
+    );
+  } finally {
+    parsingReceipt.value = false;
+  }
+};
+
+const handleExistingProofRemoved = () => {
+  existingProofUrl.value = null;
 };
 
 const currencyTotals = computed(() => {
@@ -230,7 +323,7 @@ const resolveSimilarEntry = (continueAdd) => {
   }
 };
 
-const addEntry = async () => {
+const saveEntry = async () => {
   if (isReadOnly.value) return;
 
   if (!currentListId.value) {
@@ -262,9 +355,11 @@ const addEntry = async () => {
   const date = entryForm.value.date;
   const category = entryForm.value.category;
   const noteNorm = normalizeNote(entryForm.value.note);
+  const editingId = editingEntryId.value;
 
   const exactDuplicate = entries.value.some(
     (entry) =>
+      entry.id !== editingId &&
       entry.Date === date &&
       sameAmount(entry.Amount, amount) &&
       entry.Category === category &&
@@ -273,7 +368,6 @@ const addEntry = async () => {
   if (exactDuplicate) {
     const msg = t("duplicateEntryBlocked");
     entryErrors.value.date = msg;
-    // Mark related fields invalid without repeating the same message.
     entryErrors.value.category = " ";
     entryErrors.value.note = " ";
     entryErrors.value.amount = " ";
@@ -281,7 +375,10 @@ const addEntry = async () => {
   }
 
   const similarEntry = entries.value.some(
-    (entry) => entry.Date === date && sameAmount(entry.Amount, amount),
+    (entry) =>
+      entry.id !== editingId &&
+      entry.Date === date &&
+      sameAmount(entry.Amount, amount),
   );
   if (similarEntry) {
     const continueAdd = await askSimilarEntryContinue();
@@ -293,9 +390,20 @@ const addEntry = async () => {
 
   try {
     saving.value = true;
-    let proofUrl = null;
-    const proofFile = entryForm.value.proof;
+    let proofUrl = existingProofUrl.value
+      ? entries.value.find((e) => e.id === editingId)?.Proof?.url || null
+      : null;
 
+    // Prefer existing entry proof url when editing and no new file
+    if (editingId && existingProofUrl.value) {
+      const current = entries.value.find((e) => e.id === editingId);
+      proofUrl = current?.Proof?.url || null;
+    }
+    if (!existingProofUrl.value && !entryForm.value.proof) {
+      proofUrl = null;
+    }
+
+    const proofFile = entryForm.value.proof;
     if (proofFile && proofFile instanceof File) {
       try {
         const uploadResponse = await api.uploadImage(proofFile);
@@ -305,46 +413,69 @@ const addEntry = async () => {
       }
     }
 
-    const newEntry = {
-      Date: entryForm.value.date,
-      Category: entryForm.value.category,
-      Note: entryForm.value.note,
-      Amount: amount,
-      Currency: entryForm.value.currency,
-      Proof: proofUrl ? { url: proofUrl } : null,
-    };
+    if (editingId) {
+      const response = await api.updateEntry(editingId, {
+        Date: date,
+        Category: category,
+        Note: entryForm.value.note,
+        Amount: amount,
+        Proof: proofUrl ? { url: proofUrl } : null,
+      });
+      if (!response.success) throw new Error("failed");
 
-    entries.value.push(newEntry);
-    entries.value.sort((a, b) => new Date(a.Date) - new Date(b.Date));
-    total.value += amount;
-
-    await api.updateList(currentListId.value, {
-      entries: entries.value,
-      total: total.value,
-    });
-
-    try {
-      const res = await api.getList(currentListId.value);
-      if (res.success) {
-        entries.value = res.list.entries.sort(
-          (a, b) => new Date(a.Date) - new Date(b.Date),
-        );
-        total.value = res.list.total || total.value;
+      const idx = entries.value.findIndex((e) => e.id === editingId);
+      if (idx >= 0) {
+        entries.value[idx] = {
+          ...entries.value[idx],
+          ...response.entry,
+          Currency: entryForm.value.currency,
+        };
       }
-    } catch (e) {
-      console.error("Failed to sync entries after adding", e);
+      if (response.listTotal != null) total.value = response.listTotal;
+      entries.value.sort((a, b) => new Date(a.Date) - new Date(b.Date));
+      showToast(t("entryUpdated"), "success");
+    } else {
+      const newEntry = {
+        Date: date,
+        Category: category,
+        Note: entryForm.value.note,
+        Amount: amount,
+        Currency: entryForm.value.currency,
+        Proof: proofUrl ? { url: proofUrl } : null,
+      };
+
+      entries.value.push(newEntry);
+      entries.value.sort((a, b) => new Date(a.Date) - new Date(b.Date));
+      total.value += amount;
+
+      await api.updateList(currentListId.value, {
+        entries: entries.value,
+        total: total.value,
+      });
+
+      try {
+        const res = await api.getList(currentListId.value);
+        if (res.success) {
+          entries.value = res.list.entries.sort(
+            (a, b) => new Date(a.Date) - new Date(b.Date),
+          );
+          total.value = res.list.total || total.value;
+        }
+      } catch (e) {
+        console.error("Failed to sync entries after adding", e);
+      }
+
+      showToast(t("entryAdded"), "success");
     }
 
-    entryForm.value = emptyEntryForm();
-    showEntryModal.value = false;
-
-    showToast(t("entryAdded"), "success");
+    closeEntryModal();
   } catch (error) {
     entries.value = previousEntries;
     total.value = previousTotal;
-    console.error("Error adding entry:", error);
+    console.error("Error saving entry:", error);
     showToast(
-      error.response?.data?.error || t("failedToAddEntry"),
+      error.response?.data?.error ||
+        (editingId ? t("failedToUpdateEntry") : t("failedToAddEntry")),
       "error",
     );
   } finally {
@@ -665,14 +796,24 @@ onMounted(async () => {
                     v-if="!isReadOnly"
                     class="whitespace-nowrap px-4 py-3 text-right"
                   >
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      class="text-red-600 hover:bg-red-50 hover:text-red-700"
-                      @click="requestDeleteEntry(idx)"
-                    >
-                      <Trash2 class="h-4 w-4" />
-                    </Button>
+                    <div class="inline-flex gap-1">
+                      <Button
+                        v-if="entry.id"
+                        variant="ghost"
+                        size="icon-sm"
+                        @click="openEditEntry(entry)"
+                      >
+                        <Pencil class="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        class="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        @click="requestDeleteEntry(idx)"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -684,12 +825,18 @@ onMounted(async () => {
 
     <Dialog
       :open="showEntryModal"
-      :title="t('addNewEntry')"
+      :title="editingEntryId ? t('editEntry') : t('addNewEntry')"
       class="max-w-2xl"
       actions-class="grid w-full grid-cols-2 gap-2"
-      @update:open="(v) => (v ? openEntryModal() : closeEntryModal())"
+      @update:open="(v) => (v ? null : closeEntryModal())"
     >
-      <form id="entry-form" class="space-y-4" @submit.prevent="addEntry">
+      <form id="entry-form" class="space-y-4" @submit.prevent="saveEntry">
+        <p
+          v-if="parsingReceipt"
+          class="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-neutral-600"
+        >
+          {{ t("parsingReceipt") }}
+        </p>
         <div class="grid gap-4 sm:grid-cols-2">
           <Field
             class="sm:col-span-2"
@@ -809,13 +956,19 @@ onMounted(async () => {
           </Field>
           <div class="min-w-0 space-y-2 sm:col-span-2">
             <Label>{{ t("tableProof") }}</Label>
+            <p class="text-xs text-neutral-500">{{ t("receiptOcrHint") }}</p>
             <UploadImage
               v-model="entryForm.proof"
               :multiple="false"
               :max-size="5 * 1024 * 1024"
               :hint="t('selectImage')"
               accept="image/*"
-              :show-existing="false"
+              :show-existing="!!existingProofUrl && !entryForm.proof"
+              :existing-images="
+                existingProofUrl ? [{ url: existingProofUrl }] : []
+              "
+              @file-added="handleProofAdded"
+              @existing-removed="handleExistingProofRemoved"
             />
           </div>
         </div>
@@ -833,9 +986,9 @@ onMounted(async () => {
           type="submit"
           form="entry-form"
           class="h-11 w-full"
-          :loading="saving"
+          :loading="saving || parsingReceipt"
         >
-          {{ t("addEntry") }}
+          {{ editingEntryId ? t("saveEntry") : t("addEntry") }}
         </Button>
       </template>
     </Dialog>

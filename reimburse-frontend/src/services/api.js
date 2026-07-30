@@ -65,11 +65,6 @@ export default {
     const formData = new FormData();
     formData.append("image", file);
 
-    // We need to let the browser set Content-Type for multipart/form-data
-    // but axios might need help or simply not setting it manually
-    // The interceptor might override? No, usually fine.
-    // Important: Don't manually set Content-Type to multipart/form-data with axios,
-    // let it generate the boundary.
     const response = await api.post("/upload-image", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
@@ -78,9 +73,27 @@ export default {
     return response.data;
   },
 
+  // Parse receipt with OCR.space (multipart)
+  async parseReceipt(file, params = {}) {
+    const formData = new FormData();
+    formData.append("image", file);
+    const response = await api.post("/parse-receipt", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+      params,
+    });
+    return response.data;
+  },
+
   // Delete entry
   async deleteEntry(id) {
     const response = await api.delete(`/entries/${id}`);
+    return response.data;
+  },
+
+  async updateEntry(id, data) {
+    const response = await api.put(`/entries/${id}`, data);
     return response.data;
   },
 

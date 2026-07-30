@@ -1796,6 +1796,75 @@ app.post(
   },
 );
 
+// Parse receipt via OCR.space and suggest form fields
+app.post(
+  "/api/parse-receipt",
+  authenticateToken,
+  requireCompanyUser,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({ success: false, error: "No image file provided" });
+      }
+      if (!process.env.OCR_SPACE_API_KEY) {
+        return res.status(503).json({
+          success: false,
+          error: "Receipt OCR is not configured",
+        });
+      }
+
+      const { parseReceipt } = require("./utils/receiptOcr");
+      const { categoryValue } = require("./database/categories");
+
+      let categories = [];
+      const companyId = isSuperadmin(req.user)
+        ? Number(req.query.companyId || req.body?.companyId) || null
+        : req.user.company_id;
+
+      if (companyId) {
+        const [rows] = await db.query(
+          `SELECT name_id, name_zh FROM categories
+           WHERE company_id = ?
+           ORDER BY sort_order ASC, id ASC`,
+          [companyId],
+        );
+        categories = rows.map((row) => ({
+          name_id: row.name_id,
+          name_zh: row.name_zh,
+          value: categoryValue(row.name_id, row.name_zh),
+        }));
+      }
+
+      const parsed = await parseReceipt(req.file.buffer, {
+        filename: req.file.originalname || "receipt.jpg",
+        categories,
+      });
+
+      res.json({
+        success: true,
+        fields: {
+          date: parsed.date,
+          amount: parsed.amount,
+          currency: parsed.currency || "IDR",
+          note: parsed.note || "",
+          category: parsed.category || "",
+        },
+        confidence: parsed.confidence,
+        rawText: parsed.text,
+      });
+    } catch (error) {
+      console.error("Error parsing receipt:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to parse receipt",
+      });
+    }
+  },
+);
+
 // Upload image
 app.post("/api/upload-image", authenticateToken, requireCompanyUser, upload.single("image"), async (req, res) => {
   try {
@@ -1822,6 +1891,132 @@ app.post("/api/upload-image", authenticateToken, requireCompanyUser, upload.sing
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Update an entry
+app.put(
+  "/api/entries/:id",
+  authenticateToken,
+  requireCompanyUser,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { Date: date, Category, Note, Amount, Proof } = req.body;
+
+      if (isFinance(req.user)) {
+        return res.status(403).json({
+          success: false,
+          error: "Finance users have read-only access",
+        });
+      }
+
+      const [rows] = await db.query(
+        `SELECT e.id, e.list_id, e.proof_image, e.amount, l.user_id, u.company_id
+         FROM entries e
+         INNER JOIN lists l ON l.id = e.list_id
+         INNER JOIN users u ON u.id = l.user_id
+         WHERE e.id = ?`,
+        [id],
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ success: false, error: "Entry not found" });
+      }
+
+      const entry = rows[0];
+      if (
+        !isSuperadmin(req.user) &&
+        Number(entry.company_id) !== Number(req.user.company_id)
+      ) {
+        return res.status(404).json({ success: false, error: "Entry not found" });
+      }
+      if (
+        !isSuperadmin(req.user) &&
+        !isManagement(req.user) &&
+        Number(entry.user_id) !== Number(req.user.id)
+      ) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
+
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({
+          success: false,
+          error: "date is required (YYYY-MM-DD)",
+        });
+      }
+      if (!Category || !String(Category).trim()) {
+        return res
+          .status(400)
+          .json({ success: false, error: "category is required" });
+      }
+      if (Amount == null || Number.isNaN(Number(Amount))) {
+        return res
+          .status(400)
+          .json({ success: false, error: "amount is required" });
+      }
+
+      const nextAmount = Number(Amount);
+      const nextProof =
+        Proof && typeof Proof === "object" && Proof.url
+          ? Proof.url
+          : typeof Proof === "string"
+            ? Proof
+            : Proof === null
+              ? null
+              : entry.proof_image;
+
+      await db.query(
+        `UPDATE entries
+         SET date = ?, category = ?, note = ?, amount = ?, proof_image = ?
+         WHERE id = ?`,
+        [
+          date,
+          String(Category).trim(),
+          Note != null ? String(Note) : null,
+          nextAmount,
+          nextProof,
+          id,
+        ],
+      );
+
+      if (
+        entry.proof_image &&
+        nextProof &&
+        entry.proof_image !== nextProof
+      ) {
+        await deleteImage(entry.proof_image);
+      } else if (entry.proof_image && nextProof === null) {
+        await deleteImage(entry.proof_image);
+      }
+
+      // Recalculate list total
+      const [sumRows] = await db.query(
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM entries WHERE list_id = ?",
+        [entry.list_id],
+      );
+      const listTotal = parseFloat(sumRows[0].total) || 0;
+      await db.query(
+        "UPDATE lists SET total = ?, updated_at = NOW() WHERE id = ?",
+        [listTotal, entry.list_id],
+      );
+
+      res.json({
+        success: true,
+        entry: {
+          id: Number(id),
+          Date: date,
+          Category: String(Category).trim(),
+          Note: Note != null ? String(Note) : "",
+          Amount: nextAmount,
+          Proof: nextProof ? { url: nextProof } : null,
+        },
+        listTotal,
+      });
+    } catch (error) {
+      console.error("Error updating entry:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+);
 
 // Delete an entry (helper endpoint)
 app.delete(
