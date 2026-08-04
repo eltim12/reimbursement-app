@@ -158,6 +158,9 @@ export const translations = {
     saveEntry: "Simpan entri",
     failedToUpdateEntry: "Gagal memperbarui entri",
     parsingReceipt: "Membaca struk…",
+    receiptScanStage1: "Mendeteksi teks",
+    receiptScanStage2: "Mengekstrak jumlah & tanggal",
+    receiptScanStage3: "Mencocokkan kategori",
     receiptOcrHint:
       "Unggah struk untuk mengisi tanggal, jumlah, catatan, dan kategori secara otomatis. Anda masih bisa mengubahnya.",
     receiptParsed: "Struk berhasil dibaca — periksa dan sesuaikan jika perlu",
@@ -377,6 +380,9 @@ export const translations = {
     saveEntry: "保存条目",
     failedToUpdateEntry: "更新条目失败",
     parsingReceipt: "正在识别收据…",
+    receiptScanStage1: "检测文字",
+    receiptScanStage2: "提取金额与日期",
+    receiptScanStage3: "匹配类别",
     receiptOcrHint:
       "上传收据可自动填写日期、金额、备注和类别。您仍可手动修改。",
     receiptParsed: "收据识别成功 — 请核对并按需修改",

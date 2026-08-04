@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ArrowLeft, FileDown, FileSpreadsheet, Pencil, Plus, Trash2, X } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import UploadImage from "@/components/UploadImage.vue";
+import ReceiptScanOverlay from "@/components/ReceiptScanOverlay.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
@@ -164,30 +165,56 @@ const formatAmountForCurrency = (amount, currency) => {
 
 const applyOcrFields = (fields) => {
   if (!fields) return;
-  if (fields.date) entryForm.value.date = fields.date;
-  if (fields.category && isKnownCategory(fields.category)) {
+  // Only fill empty fields — never overwrite user input.
+  if (!entryForm.value.date && fields.date) {
+    entryForm.value.date = fields.date;
+  }
+  if (
+    !entryForm.value.category?.trim() &&
+    fields.category &&
+    isKnownCategory(fields.category)
+  ) {
     entryForm.value.category = fields.category;
   }
-  if (fields.note) entryForm.value.note = fields.note;
-  if (fields.currency === "RMB" || fields.currency === "IDR") {
-    entryForm.value.currency = fields.currency;
+  if (!entryForm.value.note?.trim() && fields.note) {
+    entryForm.value.note = fields.note;
   }
-  if (fields.amount != null && Number(fields.amount) > 0) {
-    entryForm.value.amount = formatAmountForCurrency(
-      fields.amount,
-      entryForm.value.currency,
-    );
+  if (!entryForm.value.amount?.trim()) {
+    if (fields.currency === "RMB" || fields.currency === "IDR") {
+      entryForm.value.currency = fields.currency;
+    }
+    if (fields.amount != null && Number(fields.amount) > 0) {
+      entryForm.value.amount = formatAmountForCurrency(
+        fields.amount,
+        entryForm.value.currency,
+      );
+    }
   }
   clearEntryErrors();
+};
+
+const formHasUserInput = () => {
+  const f = entryForm.value;
+  return Boolean(
+    String(f.date || "").trim() ||
+      String(f.category || "").trim() ||
+      String(f.note || "").trim() ||
+      String(f.amount || "").trim(),
+  );
 };
 
 const handleProofAdded = async (fileObj) => {
   const file = fileObj?.file;
   if (!file || !(file instanceof File)) return;
 
+  // Autorecognize only when the form is still empty.
+  if (formHasUserInput()) return;
+
   try {
     parsingReceipt.value = true;
     const response = await api.parseReceipt(file);
+    // Re-check: user may have typed while OCR was running.
+    if (formHasUserInput()) return;
     if (response.success && response.fields) {
       applyOcrFields(response.fields);
       const filled = [
@@ -831,12 +858,6 @@ onMounted(async () => {
       @update:open="(v) => (v ? null : closeEntryModal())"
     >
       <form id="entry-form" class="space-y-4" @submit.prevent="saveEntry">
-        <p
-          v-if="parsingReceipt"
-          class="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-neutral-600"
-        >
-          {{ t("parsingReceipt") }}
-        </p>
         <div class="grid gap-4 sm:grid-cols-2">
           <Field
             class="sm:col-span-2"
@@ -957,19 +978,22 @@ onMounted(async () => {
           <div class="min-w-0 space-y-2 sm:col-span-2">
             <Label>{{ t("tableProof") }}</Label>
             <p class="text-xs text-neutral-500">{{ t("receiptOcrHint") }}</p>
-            <UploadImage
-              v-model="entryForm.proof"
-              :multiple="false"
-              :max-size="5 * 1024 * 1024"
-              :hint="t('selectImage')"
-              accept="image/*"
-              :show-existing="!!existingProofUrl && !entryForm.proof"
-              :existing-images="
-                existingProofUrl ? [{ url: existingProofUrl }] : []
-              "
-              @file-added="handleProofAdded"
-              @existing-removed="handleExistingProofRemoved"
-            />
+            <ReceiptScanOverlay :active="parsingReceipt" />
+            <div :class="parsingReceipt ? 'hidden' : ''">
+              <UploadImage
+                v-model="entryForm.proof"
+                :multiple="false"
+                :max-size="5 * 1024 * 1024"
+                :hint="t('selectImage')"
+                accept="image/*"
+                :show-existing="!!existingProofUrl && !entryForm.proof"
+                :existing-images="
+                  existingProofUrl ? [{ url: existingProofUrl }] : []
+                "
+                @file-added="handleProofAdded"
+                @existing-removed="handleExistingProofRemoved"
+              />
+            </div>
           </div>
         </div>
       </form>
