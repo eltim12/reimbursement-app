@@ -6,6 +6,7 @@ import Users from "../views/Users.vue";
 import Categories from "../views/Categories.vue";
 import Analytics from "../views/Analytics.vue";
 import Companies from "../views/Companies.vue";
+import Purchasing from "../views/Purchasing.vue";
 import Login from "../views/Login.vue";
 
 const routes = [
@@ -20,6 +21,12 @@ const routes = [
     name: "ListDetail",
     component: ListDetail,
     meta: { requiresAuth: true },
+  },
+  {
+    path: "/purchasing",
+    name: "Purchasing",
+    component: Purchasing,
+    meta: { requiresAuth: true, requiresPurchasing: true },
   },
   {
     path: "/profile",
@@ -83,6 +90,7 @@ router.beforeEach((to, from, next) => {
     isSuperadmin ||
     ["management", "finance", "admin"].includes(user.role);
   const canManageUsers = isSuperadmin || user.role === "management";
+  const canAccessPurchasing = isSuperadmin || !!user.purchasing_enabled;
 
   if (to.meta.requiresAuth && !isAuthenticated) {
     next("/login");
@@ -105,6 +113,11 @@ router.beforeEach((to, from, next) => {
   }
 
   if (to.meta.requiresCategoryAdmin && !canManageCategories) {
+    next("/");
+    return;
+  }
+
+  if (to.meta.requiresPurchasing && !canAccessPurchasing) {
     next("/");
     return;
   }

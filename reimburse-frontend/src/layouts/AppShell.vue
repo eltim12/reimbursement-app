@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -12,19 +12,23 @@ import {
   UserRound,
   Users,
   Building2,
+  ShoppingCart,
   X,
 } from "@lucide/vue";
 import LangToggle from "@/components/LangToggle.vue";
 import Button from "@/components/ui/Button.vue";
 import { useI18n } from "@/composables/useI18n";
 import { cn } from "@/lib/utils";
+import api from "@/services/api";
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const mobileOpen = ref(false);
+const userTick = ref(0);
 
 const user = computed(() => {
+  userTick.value;
   try {
     return JSON.parse(localStorage.getItem("user") || "{}");
   } catch {
@@ -32,10 +36,29 @@ const user = computed(() => {
   }
 });
 
+onMounted(async () => {
+  try {
+    const response = await api.getProfile();
+    if (response.success) {
+      const stored = JSON.parse(localStorage.getItem("user") || "{}");
+      localStorage.setItem(
+        "user",
+        JSON.stringify({ ...stored, ...response.user }),
+      );
+      userTick.value += 1;
+    }
+  } catch {
+    /* ignore */
+  }
+});
+
 const isManagement = computed(() => user.value.role === "management");
 const isSuperadmin = computed(() => user.value.role === "superadmin");
 const canManageCategories = computed(() =>
   ["management", "finance", "admin"].includes(user.value.role),
+);
+const canAccessPurchasing = computed(
+  () => isSuperadmin.value || !!user.value.purchasing_enabled,
 );
 
 const navItems = computed(() => {
@@ -52,6 +75,12 @@ const navItems = computed(() => {
         to: "/analytics",
         label: t("navAnalytics"),
         icon: BarChart3,
+        exact: true,
+      },
+      {
+        to: "/purchasing",
+        label: t("navPurchasing"),
+        icon: ShoppingCart,
         exact: true,
       },
       {
@@ -93,6 +122,14 @@ const navItems = computed(() => {
       exact: true,
     },
   ];
+  if (canAccessPurchasing.value) {
+    items.push({
+      to: "/purchasing",
+      label: t("navPurchasing"),
+      icon: ShoppingCart,
+      exact: true,
+    });
+  }
   if (canManageCategories.value) {
     items.push({
       to: "/categories",

@@ -60,6 +60,7 @@ const form = ref({
   password: "",
   confirmPassword: "",
   company_id: "",
+  purchasing_editor: false,
 });
 
 const roleItems = computed(() => [
@@ -97,6 +98,7 @@ const emptyForm = () => ({
   password: "",
   confirmPassword: "",
   company_id: companyFilter.value || "",
+  purchasing_editor: false,
 });
 
 const loadUsers = async () => {
@@ -135,6 +137,7 @@ const openEdit = (user) => {
     password: "",
     confirmPassword: "",
     company_id: user.company_id != null ? String(user.company_id) : "",
+    purchasing_editor: !!user.purchasing_editor,
   };
   showModal.value = true;
 };
@@ -179,6 +182,7 @@ const saveUser = async () => {
       email: form.value.email.trim(),
       name: form.value.name.trim(),
       role: form.value.role,
+      purchasing_editor: !!form.value.purchasing_editor,
     };
     if (form.value.password) payload.password = form.value.password;
     if (isSuperadmin.value && form.value.company_id) {
@@ -346,6 +350,9 @@ onMounted(async () => {
                   {{ t("role") }}
                 </th>
                 <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
+                  {{ t("purchasingEditor") }}
+                </th>
+                <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                   {{ t("createdAt") }}
                 </th>
                 <th
@@ -358,7 +365,7 @@ onMounted(async () => {
             <tbody>
               <tr v-if="loading">
                 <td
-                  :colspan="isSuperadmin ? 6 : 5"
+                  :colspan="isSuperadmin ? 7 : 6"
                   class="px-4 py-8 text-center text-neutral-500"
                 >
                   Loading…
@@ -366,7 +373,7 @@ onMounted(async () => {
               </tr>
               <tr v-else-if="filteredUsers.length === 0">
                 <td
-                  :colspan="isSuperadmin ? 6 : 5"
+                  :colspan="isSuperadmin ? 7 : 6"
                   class="px-4 py-8 text-center text-neutral-500"
                 >
                   {{ t("noUsers") }}
@@ -389,6 +396,15 @@ onMounted(async () => {
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">
                   {{ roleLabel(user.role) }}
+                </td>
+                <td class="whitespace-nowrap px-4 py-3 text-neutral-600">
+                  {{
+                    user.role === "finance" || user.role === "management"
+                      ? t("purchasingFeatureOn")
+                      : user.purchasing_editor
+                        ? t("purchasingFeatureOn")
+                        : t("purchasingFeatureOff")
+                  }}
                 </td>
                 <td class="whitespace-nowrap px-4 py-3 font-mono text-neutral-600">
                   {{
@@ -484,6 +500,24 @@ onMounted(async () => {
               </SelectGroup>
             </SelectContent>
           </Select>
+        </div>
+        <div class="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+          <label class="flex items-start gap-3 text-sm">
+            <input
+              v-model="form.purchasing_editor"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-neutral-300"
+              :disabled="
+                form.role === 'finance' || form.role === 'management'
+              "
+            />
+            <span>
+              <span class="font-medium">{{ t("purchasingEditor") }}</span>
+              <span class="mt-0.5 block text-xs text-neutral-500">
+                {{ t("purchasingEditorHint") }}
+              </span>
+            </span>
+          </label>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="space-y-2">

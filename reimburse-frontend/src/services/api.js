@@ -195,4 +195,25 @@ export default {
     );
     return response.data;
   },
+
+  // Purchasing
+  async getPurchasing(params = {}) {
+    const response = await api.get("/purchasing", { params });
+    return response.data;
+  },
+
+  async createPurchasing(data) {
+    const response = await api.post("/purchasing", data);
+    return response.data;
+  },
+
+  async updatePurchasing(id, data) {
+    const response = await api.put(`/purchasing/${id}`, data);
+    return response.data;
+  },
+
+  async deletePurchasing(id) {
+    const response = await api.delete(`/purchasing/${id}`);
+    return response.data;
+  },
 };

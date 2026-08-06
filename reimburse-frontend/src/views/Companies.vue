@@ -102,6 +102,28 @@ const askDelete = (company) => {
   showDeleteModal.value = true;
 };
 
+const togglingId = ref(null);
+
+const togglePurchasing = async (company) => {
+  togglingId.value = company.id;
+  try {
+    const response = await api.updateCompany(company.id, {
+      purchasing_enabled: !company.purchasing_enabled,
+    });
+    if (response.success) {
+      showToast(t("purchasingFeatureToggled"), "success");
+      await loadCompanies();
+    }
+  } catch (error) {
+    showToast(
+      error.response?.data?.error || t("failedToSaveCompany"),
+      "error",
+    );
+  } finally {
+    togglingId.value = null;
+  }
+};
+
 const saveCompany = async () => {
   if (!createForm.value.name.trim()) {
     showToast(t("companyNameRequired"), "error");
@@ -256,6 +278,21 @@ onMounted(() => {
                 </p>
               </div>
               <div class="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  :variant="company.purchasing_enabled ? 'default' : 'outline'"
+                  size="sm"
+                  class="gap-1"
+                  :loading="togglingId === company.id"
+                  @click="togglePurchasing(company)"
+                >
+                  {{ t("purchasingFeature") }}:
+                  {{
+                    company.purchasing_enabled
+                      ? t("purchasingFeatureOn")
+                      : t("purchasingFeatureOff")
+                  }}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

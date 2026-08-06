@@ -61,7 +61,11 @@ const authenticateToken = (req, res, next) => {
 
     try {
       const [users] = await db.query(
-        "SELECT id, email, role, company_id FROM users WHERE id = ?",
+        `SELECT u.id, u.email, u.role, u.company_id, u.purchasing_editor,
+                c.purchasing_enabled
+         FROM users u
+         LEFT JOIN companies c ON c.id = u.company_id
+         WHERE u.id = ?`,
         [decoded.id],
       );
       if (users.length === 0) {
@@ -72,6 +76,8 @@ const authenticateToken = (req, res, next) => {
         email: users[0].email,
         role: users[0].role || "user",
         company_id: users[0].company_id ?? null,
+        purchasing_editor: !!users[0].purchasing_editor,
+        purchasing_enabled: !!users[0].purchasing_enabled,
       };
       next();
     } catch (error) {
@@ -178,6 +184,17 @@ const { categoryValue, mapCategoryRow, seedCategoriesForCompany } = require(
 );
 const { slugify } = require("./database/companies");
 
+require("./routes/purchasing")({
+  app,
+  db,
+  authenticateToken,
+  requireCompanyUser,
+  resolveCompanyFilter,
+  isSuperadmin,
+  isManagement,
+  isFinance,
+});
+
 // Routes
 
 // Health check
@@ -216,6 +233,18 @@ app.post("/api/auth/login", async (req, res) => {
 
     const role = user.role || "user";
     const company_id = user.company_id ?? null;
+    const purchasing_editor = !!user.purchasing_editor;
+
+    let purchasing_enabled = false;
+    if (role === "superadmin") {
+      purchasing_enabled = true;
+    } else if (company_id) {
+      const [companies] = await db.query(
+        "SELECT purchasing_enabled FROM companies WHERE id = ?",
+        [company_id],
+      );
+      purchasing_enabled = !!companies[0]?.purchasing_enabled;
+    }
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role, company_id },
@@ -231,6 +260,8 @@ app.post("/api/auth/login", async (req, res) => {
         name: user.name,
         role,
         company_id,
+        purchasing_editor,
+        purchasing_enabled,
       },
     });
   } catch (error) {
@@ -677,7 +708,8 @@ app.get("/api/admin/users", authenticateToken, requireManagement, async (req, re
     let users;
     if (scope.companyId == null) {
       [users] = await db.query(
-        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.created_at, u.updated_at,
+        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.purchasing_editor,
+                u.created_at, u.updated_at,
                 c.name AS company_name
          FROM users u
          LEFT JOIN companies c ON c.id = u.company_id
@@ -686,7 +718,8 @@ app.get("/api/admin/users", authenticateToken, requireManagement, async (req, re
       );
     } else {
       [users] = await db.query(
-        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.created_at, u.updated_at,
+        `SELECT u.id, u.email, u.name, u.role, u.company_id, u.purchasing_editor,
+                u.created_at, u.updated_at,
                 c.name AS company_name
          FROM users u
          LEFT JOIN companies c ON c.id = u.company_id
@@ -706,6 +739,7 @@ app.get("/api/admin/users", authenticateToken, requireManagement, async (req, re
         role: user.role || "user",
         company_id: user.company_id,
         company_name: user.company_name || null,
+        purchasing_editor: !!user.purchasing_editor,
         createdAt: user.created_at,
         updatedAt: user.updated_at,
       })),
@@ -719,7 +753,7 @@ app.get("/api/admin/users", authenticateToken, requireManagement, async (req, re
 // Create user (management: own company; superadmin: any company via company_id)
 app.post("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, purchasing_editor } = req.body;
     const scope = resolveCompanyFilter(req, { required: true });
     if (scope.error) {
       return res.status(400).json({ success: false, error: scope.error });
@@ -757,6 +791,7 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
     }
 
     const nextRole = ALLOWED_ROLES.includes(role) ? role : "user";
+    const nextPurchasingEditor = purchasing_editor ? 1 : 0;
 
     const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
       email.trim(),
@@ -769,8 +804,15 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await db.query(
-      "INSERT INTO users (email, password, name, role, company_id) VALUES (?, ?, ?, ?, ?)",
-      [email.trim(), hashedPassword, (name || "").trim(), nextRole, companyId],
+      "INSERT INTO users (email, password, name, role, company_id, purchasing_editor) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        email.trim(),
+        hashedPassword,
+        (name || "").trim(),
+        nextRole,
+        companyId,
+        nextPurchasingEditor,
+      ],
     );
 
     res.json({
@@ -781,6 +823,7 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
         name: (name || "").trim(),
         role: nextRole,
         company_id: companyId,
+        purchasing_editor: !!nextPurchasingEditor,
       },
     });
   } catch (error) {
@@ -793,17 +836,24 @@ app.post("/api/admin/users", authenticateToken, requireManagement, async (req, r
 app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req, res) => {
   try {
     const { id } = req.params;
-    const { email, password, name, role, company_id: bodyCompanyId } = req.body;
+    const {
+      email,
+      password,
+      name,
+      role,
+      company_id: bodyCompanyId,
+      purchasing_editor,
+    } = req.body;
 
     let users;
     if (isSuperadmin(req.user)) {
       [users] = await db.query(
-        "SELECT id, role, company_id FROM users WHERE id = ? AND role <> 'superadmin'",
+        "SELECT id, role, company_id, purchasing_editor FROM users WHERE id = ? AND role <> 'superadmin'",
         [id],
       );
     } else {
       [users] = await db.query(
-        "SELECT id, role, company_id FROM users WHERE id = ? AND company_id = ?",
+        "SELECT id, role, company_id, purchasing_editor FROM users WHERE id = ? AND company_id = ?",
         [id, req.user.company_id],
       );
     }
@@ -841,6 +891,15 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
       }
     }
 
+    const nextPurchasingEditor =
+      purchasing_editor === undefined
+        ? users[0].purchasing_editor
+          ? 1
+          : 0
+        : purchasing_editor
+          ? 1
+          : 0;
+
     const [existing] = await db.query(
       "SELECT id FROM users WHERE email = ? AND id != ?",
       [email.trim(), id],
@@ -860,13 +919,28 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
       }
       const hashedPassword = await bcrypt.hash(password, 10);
       await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ?, password = ?, company_id = ? WHERE id = ?",
-        [email.trim(), name.trim(), nextRole, hashedPassword, companyId, id],
+        "UPDATE users SET email = ?, name = ?, role = ?, password = ?, company_id = ?, purchasing_editor = ? WHERE id = ?",
+        [
+          email.trim(),
+          name.trim(),
+          nextRole,
+          hashedPassword,
+          companyId,
+          nextPurchasingEditor,
+          id,
+        ],
       );
     } else {
       await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ?, company_id = ? WHERE id = ?",
-        [email.trim(), name.trim(), nextRole, companyId, id],
+        "UPDATE users SET email = ?, name = ?, role = ?, company_id = ?, purchasing_editor = ? WHERE id = ?",
+        [
+          email.trim(),
+          name.trim(),
+          nextRole,
+          companyId,
+          nextPurchasingEditor,
+          id,
+        ],
       );
     }
 
@@ -878,6 +952,7 @@ app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req
         name: name.trim(),
         role: nextRole,
         company_id: companyId,
+        purchasing_editor: !!nextPurchasingEditor,
       },
     });
   } catch (error) {
@@ -925,7 +1000,11 @@ app.delete("/api/admin/users/:id", authenticateToken, requireManagement, async (
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const [users] = await db.query(
-      "SELECT id, email, name, role, company_id, created_at FROM users WHERE id = ?",
+      `SELECT u.id, u.email, u.name, u.role, u.company_id, u.purchasing_editor,
+              u.created_at, c.purchasing_enabled
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+       WHERE u.id = ?`,
       [req.user.id],
     );
 
@@ -934,14 +1013,18 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
+    const role = user.role || "user";
     res.json({
       success: true,
       user: {
         id: user.id,
         email: user.email,
         name: user.name || "",
-        role: user.role || "user",
+        role,
         company_id: user.company_id ?? null,
+        purchasing_editor: !!user.purchasing_editor,
+        purchasing_enabled:
+          role === "superadmin" ? true : !!user.purchasing_enabled,
         createdAt: user.created_at,
       },
     });
@@ -1461,7 +1544,7 @@ app.get(
   async (_req, res) => {
     try {
       const [rows] = await db.query(
-        `SELECT c.id, c.name, c.slug, c.created_at, c.updated_at,
+        `SELECT c.id, c.name, c.slug, c.purchasing_enabled, c.created_at, c.updated_at,
                 (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS user_count,
                 (SELECT COUNT(*) FROM categories cat WHERE cat.company_id = c.id) AS category_count
          FROM companies c
@@ -1473,6 +1556,7 @@ app.get(
           id: row.id,
           name: row.name,
           slug: row.slug,
+          purchasing_enabled: !!row.purchasing_enabled,
           userCount: Number(row.user_count) || 0,
           categoryCount: Number(row.category_count) || 0,
           createdAt: row.created_at,
@@ -1518,13 +1602,13 @@ app.post(
       }
 
       const [result] = await db.query(
-        "INSERT INTO companies (name, slug) VALUES (?, ?)",
-        [name, slug],
+        "INSERT INTO companies (name, slug, purchasing_enabled) VALUES (?, ?, ?)",
+        [name, slug, req.body.purchasing_enabled ? 1 : 0],
       );
       await seedCategoriesForCompany(db, result.insertId);
 
       const [rows] = await db.query(
-        "SELECT id, name, slug, created_at, updated_at FROM companies WHERE id = ?",
+        "SELECT id, name, slug, purchasing_enabled, created_at, updated_at FROM companies WHERE id = ?",
         [result.insertId],
       );
       res.json({
@@ -1533,6 +1617,7 @@ app.post(
           id: rows[0].id,
           name: rows[0].name,
           slug: rows[0].slug,
+          purchasing_enabled: !!rows[0].purchasing_enabled,
           createdAt: rows[0].created_at,
           updatedAt: rows[0].updated_at,
         },
@@ -1552,7 +1637,7 @@ app.get(
     try {
       const { id } = req.params;
       const [rows] = await db.query(
-        "SELECT id, name, slug, created_at, updated_at FROM companies WHERE id = ?",
+        "SELECT id, name, slug, purchasing_enabled, created_at, updated_at FROM companies WHERE id = ?",
         [id],
       );
       if (rows.length === 0) {
@@ -1561,7 +1646,7 @@ app.get(
           .json({ success: false, error: "Company not found" });
       }
       const [users] = await db.query(
-        `SELECT id, email, name, role, created_at
+        `SELECT id, email, name, role, purchasing_editor, created_at
          FROM users WHERE company_id = ?
          ORDER BY role ASC, email ASC`,
         [id],
@@ -1572,6 +1657,7 @@ app.get(
           id: rows[0].id,
           name: rows[0].name,
           slug: rows[0].slug,
+          purchasing_enabled: !!rows[0].purchasing_enabled,
           createdAt: rows[0].created_at,
           updatedAt: rows[0].updated_at,
           users: users.map((u) => ({
@@ -1579,6 +1665,7 @@ app.get(
             email: u.email,
             name: u.name || "",
             role: u.role || "user",
+            purchasing_editor: !!u.purchasing_editor,
             createdAt: u.created_at,
           })),
         },
@@ -1597,11 +1684,15 @@ app.put(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const name = String(req.body.name || "").trim();
-      let slug = String(req.body.slug || "").trim().toLowerCase();
+      const nameRaw = req.body.name;
+      const slugRaw = req.body.slug;
+      const hasPurchasingFlag = Object.prototype.hasOwnProperty.call(
+        req.body,
+        "purchasing_enabled",
+      );
 
       const [existing] = await db.query(
-        "SELECT id FROM companies WHERE id = ?",
+        "SELECT id, name, slug, purchasing_enabled FROM companies WHERE id = ?",
         [id],
       );
       if (existing.length === 0) {
@@ -1609,6 +1700,16 @@ app.put(
           .status(404)
           .json({ success: false, error: "Company not found" });
       }
+
+      let name =
+        nameRaw !== undefined
+          ? String(nameRaw || "").trim()
+          : existing[0].name;
+      let slug =
+        slugRaw !== undefined
+          ? String(slugRaw || "").trim().toLowerCase()
+          : existing[0].slug;
+
       if (!name) {
         return res
           .status(400)
@@ -1632,14 +1733,26 @@ app.put(
           .json({ success: false, error: "Company slug already exists" });
       }
 
-      await db.query("UPDATE companies SET name = ?, slug = ? WHERE id = ?", [
-        name,
-        slug,
-        id,
-      ]);
+      const purchasing_enabled = hasPurchasingFlag
+        ? req.body.purchasing_enabled
+          ? 1
+          : 0
+        : existing[0].purchasing_enabled
+          ? 1
+          : 0;
+
+      await db.query(
+        "UPDATE companies SET name = ?, slug = ?, purchasing_enabled = ? WHERE id = ?",
+        [name, slug, purchasing_enabled, id],
+      );
       res.json({
         success: true,
-        company: { id: Number(id), name, slug },
+        company: {
+          id: Number(id),
+          name,
+          slug,
+          purchasing_enabled: !!purchasing_enabled,
+        },
       });
     } catch (error) {
       console.error("Error updating company:", error);

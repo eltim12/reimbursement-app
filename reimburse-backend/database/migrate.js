@@ -105,6 +105,66 @@ async function migrate(existingDb = null) {
       console.log("✓ Added users.company_id column");
     }
 
+    if (!(await columnExists(db, "users", "purchasing_editor"))) {
+      await db.query(
+        "ALTER TABLE users ADD COLUMN purchasing_editor TINYINT(1) NOT NULL DEFAULT 0 AFTER company_id",
+      );
+      console.log("✓ Added users.purchasing_editor column");
+    }
+
+    if (!(await columnExists(db, "companies", "purchasing_enabled"))) {
+      await db.query(
+        "ALTER TABLE companies ADD COLUMN purchasing_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER slug",
+      );
+      console.log("✓ Added companies.purchasing_enabled column");
+    }
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS purchasing_requests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        requestor_id INT NOT NULL,
+        item_name VARCHAR(255) NOT NULL,
+        quantity DECIMAL(12, 2) NOT NULL DEFAULT 1,
+        note TEXT,
+        picture VARCHAR(500),
+        urgency VARCHAR(20) NOT NULL DEFAULT 'medium',
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        category VARCHAR(40) NOT NULL,
+        request_date DATETIME NOT NULL,
+        received_proof_image VARCHAR(500),
+        received_note TEXT,
+        received_at DATETIME NULL,
+        status_updated_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_purchasing_company (company_id),
+        INDEX idx_purchasing_requestor (requestor_id),
+        INDEX idx_purchasing_status (status),
+        INDEX idx_purchasing_request_date (request_date),
+        CONSTRAINT fk_purchasing_company
+          FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        CONSTRAINT fk_purchasing_requestor
+          FOREIGN KEY (requestor_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log("✓ purchasing_requests table");
+
+    // Upgrade legacy DATE → DATETIME for request_date
+    try {
+      const [col] = await db.query(
+        "SHOW COLUMNS FROM purchasing_requests LIKE 'request_date'",
+      );
+      if (col[0] && String(col[0].Type).toLowerCase().startsWith("date") && !String(col[0].Type).toLowerCase().includes("datetime") && !String(col[0].Type).toLowerCase().includes("timestamp")) {
+        await db.query(
+          "ALTER TABLE purchasing_requests MODIFY COLUMN request_date DATETIME NOT NULL",
+        );
+        console.log("✓ Upgraded purchasing_requests.request_date to DATETIME");
+      }
+    } catch (err) {
+      console.warn("purchasing request_date upgrade:", err.message);
+    }
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS lists (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -234,7 +294,14 @@ async function migrate(existingDb = null) {
       }
     }
 
-    const required = ["companies", "users", "lists", "entries", "categories"];
+    const required = [
+      "companies",
+      "users",
+      "lists",
+      "entries",
+      "categories",
+      "purchasing_requests",
+    ];
     for (const table of required) {
       if (!(await tableExists(db, table))) {
         throw new Error(`Required table missing after migrate: ${table}`);
