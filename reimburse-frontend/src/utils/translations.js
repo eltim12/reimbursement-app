@@ -284,6 +284,9 @@ export const translations = {
     filtersTitle: "Filter pembelian",
     bilingualAutoHint: "Otomatis diterjemahkan ke 中文 + Bahasa Indonesia",
     translating: "Menerjemahkan…",
+    saveStatus: "Perbarui status",
+    updateStatus: "Perbarui status",
+    editStatus: "Ubah status",
   },
   zh: {
     appTitle: "报销追踪器",
@@ -566,5 +569,8 @@ export const translations = {
     filtersTitle: "采购筛选",
     bilingualAutoHint: "自动翻译为 中文 + Bahasa Indonesia",
     translating: "翻译中…",
+    saveStatus: "更新状态",
+    updateStatus: "更新状态",
+    editStatus: "编辑状态",
   },
 };

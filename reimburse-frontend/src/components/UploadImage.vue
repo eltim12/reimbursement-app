@@ -54,6 +54,7 @@ const uploadZone = ref(null);
 const fileInput = ref(null);
 const isDragOver = ref(false);
 const fileList = ref([]);
+const previewImageUrl = ref(null);
 let fileIdCounter = 0;
 
 function generateFileId() {
@@ -290,12 +291,18 @@ onUnmounted(() => {
         :key="`existing-${index}`"
         class="flex items-center gap-3 rounded-lg border border-neutral-200 bg-white p-3"
       >
-        <img
+        <button
           v-if="getImageUrl(image)"
-          :src="getImageUrl(image)"
-          alt="Existing"
-          class="h-12 w-12 rounded-md border border-neutral-200 object-cover"
-        />
+          type="button"
+          class="shrink-0"
+          @click.stop="previewImageUrl = getImageUrl(image)"
+        >
+          <img
+            :src="getImageUrl(image)"
+            alt="Existing"
+            class="h-12 w-12 rounded-md border border-neutral-200 object-cover transition-opacity hover:opacity-80"
+          />
+        </button>
         <ImageIcon v-else class="h-8 w-8 text-neutral-300" />
         <div class="min-w-0 flex-1">
           <div class="truncate text-sm font-medium">Existing image {{ index + 1 }}</div>
@@ -363,12 +370,18 @@ onUnmounted(() => {
         <div
           class="flex w-full min-w-0 max-w-full items-center justify-center overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 sm:w-auto sm:shrink-0"
         >
-          <img
+          <button
             v-if="file.preview"
-            :src="file.preview"
-            alt="Preview"
-            class="max-h-40 max-w-full object-contain"
-          />
+            type="button"
+            class="block max-w-full"
+            @click.stop="previewImageUrl = file.preview"
+          >
+            <img
+              :src="file.preview"
+              alt="Preview"
+              class="max-h-40 max-w-full object-contain transition-opacity hover:opacity-80"
+            />
+          </button>
           <ImageIcon v-else class="m-4 h-8 w-8 text-neutral-300" />
         </div>
         <div class="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
@@ -408,4 +421,25 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="previewImageUrl"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+      @click.self="previewImageUrl = null"
+    >
+      <button
+        type="button"
+        class="absolute top-4 right-4 rounded-lg bg-white/90 p-2 text-neutral-900 hover:bg-white"
+        @click="previewImageUrl = null"
+      >
+        <X class="h-5 w-5" />
+      </button>
+      <img
+        :src="previewImageUrl"
+        alt=""
+        class="max-h-[90vh] max-w-full rounded-lg object-contain shadow-lg"
+      />
+    </div>
+  </Teleport>
 </template>

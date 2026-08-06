@@ -11,9 +11,11 @@ import {
   Search,
   ShoppingCart,
   Trash2,
+  X,
 } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import UploadImage from "@/components/UploadImage.vue";
+import Badge from "@/components/ui/Badge.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
@@ -192,12 +194,55 @@ const getImageUrl = (path) => {
   return null;
 };
 
+const previewImageUrl = ref(null);
+
+const openImagePreview = (path) => {
+  const url = getImageUrl(path);
+  if (url) previewImageUrl.value = url;
+};
+
 const labelCategory = (v) =>
   categoryItems.value.find((i) => i.value === v)?.label || v;
 const labelUrgency = (v) =>
   urgencyItems.value.find((i) => i.value === v)?.label || v;
 const labelStatus = (v) =>
   statusItems.value.find((i) => i.value === v)?.label || v;
+
+const urgencyBadgeClass = (urgency) => {
+  switch (urgency) {
+    case "high":
+      return "border-transparent bg-red-100 text-red-800";
+    case "medium":
+      return "border-transparent bg-amber-100 text-amber-800";
+    case "low":
+      return "border-transparent bg-emerald-100 text-emerald-800";
+    default:
+      return "border-transparent bg-neutral-100 text-neutral-700";
+  }
+};
+
+const statusBadgeClass = (status) => {
+  switch (status) {
+    case "pending":
+      return "border-transparent bg-neutral-100 text-neutral-700";
+    case "approved":
+      return "border-transparent bg-sky-100 text-sky-800";
+    case "ordered":
+      return "border-transparent bg-violet-100 text-violet-800";
+    case "received":
+      return "border-transparent bg-emerald-100 text-emerald-800";
+    case "rejected":
+      return "border-transparent bg-red-100 text-red-800";
+    default:
+      return "border-transparent bg-neutral-100 text-neutral-700";
+  }
+};
+
+const savingDetailStatus = ref(false);
+const detailStatus = ref("pending");
+const detailReceivedNote = ref("");
+const detailReceivedProofFile = ref(null);
+const detailExistingReceivedProof = ref([]);
 
 const formatDateTime = (value) => {
   if (!value) return "—";
@@ -211,11 +256,16 @@ const formatDateTime = (value) => {
 };
 
 const canEditRow = (row) => {
+  if (!row || row.status === "received") return false;
   if (canFullEdit.value) return true;
   return (
     row.requestor_id === currentUser.value.id && row.status === "pending"
   );
 };
+
+const canManageStatus = computed(() => canFullEdit.value);
+
+const statusEditMode = ref(false);
 
 const sortedRows = computed(() => {
   const rows = [...requests.value];
@@ -335,6 +385,10 @@ const openCreate = () => {
 };
 
 const openEdit = (row) => {
+  if (row.status === "received") {
+    openDetail(row);
+    return;
+  }
   formMode.value = "edit";
   editingId.value = row.id;
   form.value = {
@@ -360,7 +414,101 @@ const openEdit = (row) => {
 
 const openDetail = (row) => {
   detailItem.value = row;
+  detailStatus.value = row.status;
+  detailReceivedNote.value = row.received_note || "";
+  detailReceivedProofFile.value = null;
+  detailExistingReceivedProof.value = row.received_proof_image
+    ? [{ url: getImageUrl(row.received_proof_image) }]
+    : [];
+  // Received items open in display mode; others open ready to update status
+  statusEditMode.value = canFullEdit.value && row.status !== "received";
   showDetailModal.value = true;
+};
+
+const startStatusEdit = () => {
+  if (!detailItem.value) return;
+  detailStatus.value = detailItem.value.status;
+  detailReceivedNote.value = detailItem.value.received_note || "";
+  detailReceivedProofFile.value = null;
+  detailExistingReceivedProof.value = detailItem.value.received_proof_image
+    ? [{ url: getImageUrl(detailItem.value.received_proof_image) }]
+    : [];
+  statusEditMode.value = true;
+};
+
+const cancelStatusEdit = () => {
+  if (!detailItem.value) return;
+  detailStatus.value = detailItem.value.status;
+  detailReceivedNote.value = detailItem.value.received_note || "";
+  detailReceivedProofFile.value = null;
+  detailExistingReceivedProof.value = detailItem.value.received_proof_image
+    ? [{ url: getImageUrl(detailItem.value.received_proof_image) }]
+    : [];
+  statusEditMode.value =
+    canFullEdit.value && detailItem.value.status !== "received";
+};
+
+const saveDetailStatus = async () => {
+  if (!detailItem.value || !canFullEdit.value) return;
+
+  if (detailStatus.value === "received") {
+    const hasNewProof = detailReceivedProofFile.value instanceof File;
+    const hasExisting = detailExistingReceivedProof.value.length > 0;
+    if (!hasNewProof && !hasExisting) {
+      showToast(t("receivedProofRequired"), "error");
+      return;
+    }
+    if (!String(detailReceivedNote.value || "").trim()) {
+      showToast(t("receivedNoteRequired"), "error");
+      return;
+    }
+  }
+
+  try {
+    savingDetailStatus.value = true;
+    const payload = {
+      item_name: detailItem.value.item_name,
+      quantity: detailItem.value.quantity,
+      note: detailItem.value.note || "",
+      picture: detailItem.value.picture || null,
+      urgency: detailItem.value.urgency,
+      category: detailItem.value.category,
+      status: detailStatus.value,
+      received_note: detailReceivedNote.value.trim(),
+    };
+
+    if (detailReceivedProofFile.value instanceof File) {
+      const up = await api.uploadImage(detailReceivedProofFile.value);
+      if (!up.success) throw new Error("upload failed");
+      payload.received_proof_image = up.url;
+    } else if (detailExistingReceivedProof.value.length) {
+      payload.received_proof_image =
+        detailItem.value.received_proof_image || null;
+    } else {
+      payload.received_proof_image = null;
+    }
+
+    const response = await api.updatePurchasing(detailItem.value.id, payload);
+    if (response.success) {
+      detailItem.value = response.request;
+      detailStatus.value = response.request.status;
+      detailReceivedNote.value = response.request.received_note || "";
+      detailReceivedProofFile.value = null;
+      detailExistingReceivedProof.value = response.request.received_proof_image
+        ? [{ url: getImageUrl(response.request.received_proof_image) }]
+        : [];
+      statusEditMode.value = response.request.status !== "received";
+      showToast(t("purchasingUpdated"), "success");
+      await load();
+    }
+  } catch (error) {
+    showToast(
+      error.response?.data?.error || t("failedToSavePurchasing"),
+      "error",
+    );
+  } finally {
+    savingDetailStatus.value = false;
+  }
 };
 
 const closeForm = () => {
@@ -683,23 +831,33 @@ onMounted(async () => {
                 <td class="whitespace-nowrap px-4 py-3 font-mono">
                   {{ row.quantity }}
                 </td>
-                <td class="px-4 py-3">
-                  <img
+                <td class="px-4 py-3" @click.stop>
+                  <button
                     v-if="getImageUrl(row.picture)"
-                    :src="getImageUrl(row.picture)"
-                    alt=""
-                    class="h-10 w-10 rounded-md object-cover"
-                  />
+                    type="button"
+                    class="block"
+                    @click="openImagePreview(row.picture)"
+                  >
+                    <img
+                      :src="getImageUrl(row.picture)"
+                      alt=""
+                      class="h-10 w-10 rounded-md object-cover transition-opacity hover:opacity-80"
+                    />
+                  </button>
                   <span v-else class="text-neutral-400">—</span>
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">
                   {{ labelCategory(row.category) }}
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">
-                  {{ labelUrgency(row.urgency) }}
+                  <Badge :class="urgencyBadgeClass(row.urgency)">
+                    {{ labelUrgency(row.urgency) }}
+                  </Badge>
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">
-                  {{ labelStatus(row.status) }}
+                  <Badge :class="statusBadgeClass(row.status)">
+                    {{ labelStatus(row.status) }}
+                  </Badge>
                 </td>
                 <td class="whitespace-nowrap px-4 py-3">
                   {{ row.requestor_name || "—" }}
@@ -905,6 +1063,60 @@ onMounted(async () => {
       @update:open="(v) => (v ? (showFormModal = true) : closeForm())"
     >
       <form id="purchasing-form" class="space-y-4" @submit.prevent="save">
+        <div
+          v-if="canFullEdit && formMode === 'edit'"
+          class="space-y-4 rounded-xl border border-neutral-900/10 bg-neutral-50 p-4"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <Label class="text-sm font-medium text-neutral-900">{{
+              t("purchasingStatus")
+            }}</Label>
+            <Badge :class="statusBadgeClass(form.status)">
+              {{ labelStatus(form.status) }}
+            </Badge>
+          </div>
+          <Select
+            :model-value="form.status"
+            :items="statusItems"
+            @update:model-value="(v) => (form.status = v)"
+          >
+            <SelectTrigger class="h-11 bg-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem
+                  v-for="item in statusItems"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div
+            v-if="form.status === 'received'"
+            class="space-y-4 rounded-lg border border-neutral-200 bg-white p-3"
+          >
+            <div class="space-y-2">
+              <Label>{{ t("receivedNote") }}</Label>
+              <Input v-model="form.received_note" class="h-11" />
+            </div>
+            <div class="space-y-2">
+              <Label>{{ t("receivedProof") }}</Label>
+              <UploadImage
+                v-model="form.receivedProofFile"
+                :existing-images="existingReceivedProof"
+                :show-existing="
+                  existingReceivedProof.length > 0 && !form.receivedProofFile
+                "
+                @existing-removed="existingReceivedProof = []"
+              />
+            </div>
+          </div>
+        </div>
+
         <div class="space-y-2">
           <Label>{{ t("itemName") }}</Label>
           <textarea
@@ -1010,49 +1222,6 @@ onMounted(async () => {
             @existing-removed="existingPicture = []"
           />
         </div>
-
-        <template v-if="canFullEdit && formMode === 'edit'">
-          <div class="space-y-2">
-            <Label>{{ t("purchasingStatus") }}</Label>
-            <Select
-              :model-value="form.status"
-              :items="statusItems"
-              @update:model-value="(v) => (form.status = v)"
-            >
-              <SelectTrigger class="h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem
-                    v-for="item in statusItems"
-                    :key="item.value"
-                    :value="item.value"
-                  >
-                    {{ item.label }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-          <div v-if="form.status === 'received'" class="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-            <div class="space-y-2">
-              <Label>{{ t("receivedNote") }}</Label>
-              <Input v-model="form.received_note" class="h-11" />
-            </div>
-            <div class="space-y-2">
-              <Label>{{ t("receivedProof") }}</Label>
-              <UploadImage
-                v-model="form.receivedProofFile"
-                :existing-images="existingReceivedProof"
-                :show-existing="
-                  existingReceivedProof.length > 0 && !form.receivedProofFile
-                "
-                @existing-removed="existingReceivedProof = []"
-              />
-            </div>
-          </div>
-        </template>
       </form>
       <template #actions>
         <Button
@@ -1079,11 +1248,153 @@ onMounted(async () => {
       :open="showDetailModal"
       :title="t('purchasingDetail')"
       class="max-w-lg"
+      actions-class="grid grid-cols-2 gap-2"
       @update:open="(v) => (showDetailModal = v)"
     >
       <div v-if="detailItem" class="space-y-4 text-sm">
+        <!-- Status: display (received) -->
+        <div
+          v-if="canManageStatus && detailItem.status === 'received' && !statusEditMode"
+          class="space-y-4 rounded-xl border border-neutral-900/10 bg-neutral-50 p-4"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <Label class="text-sm font-medium text-neutral-900">{{
+              t("purchasingStatus")
+            }}</Label>
+            <Badge :class="statusBadgeClass(detailItem.status)">
+              {{ labelStatus(detailItem.status) }}
+            </Badge>
+          </div>
+          <div class="space-y-3 rounded-lg border border-neutral-200 bg-white p-3">
+            <div>
+              <div class="text-xs text-neutral-500">{{ t("receivedNote") }}</div>
+              <div class="mt-0.5 font-medium">
+                {{ detailItem.received_note || "—" }}
+              </div>
+            </div>
+            <div>
+              <div class="text-xs text-neutral-500">{{ t("receivedAt") }}</div>
+              <div class="mt-0.5 font-mono text-xs">
+                {{ formatDateTime(detailItem.received_at) }}
+              </div>
+            </div>
+            <div v-if="getImageUrl(detailItem.received_proof_image)">
+              <div class="mb-2 text-xs text-neutral-500">
+                {{ t("receivedProof") }}
+              </div>
+              <button
+                type="button"
+                class="block w-full"
+                @click="openImagePreview(detailItem.received_proof_image)"
+              >
+                <img
+                  :src="getImageUrl(detailItem.received_proof_image)"
+                  alt=""
+                  class="max-h-48 w-full rounded-lg border border-neutral-200 object-contain transition-opacity hover:opacity-80"
+                />
+              </button>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            class="h-11 w-full"
+            @click="startStatusEdit"
+          >
+            <Pencil class="h-4 w-4" />
+            {{ t("editStatus") }}
+          </Button>
+        </div>
+
+        <!-- Status: edit -->
+        <div
+          v-else-if="canManageStatus && statusEditMode"
+          class="space-y-4 rounded-xl border border-neutral-900/10 bg-neutral-50 p-4"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <Label class="text-sm font-medium text-neutral-900">{{
+              t("purchasingStatus")
+            }}</Label>
+            <Badge :class="statusBadgeClass(detailStatus)">
+              {{ labelStatus(detailStatus) }}
+            </Badge>
+          </div>
+          <Select
+            :model-value="detailStatus"
+            :items="statusItems"
+            @update:model-value="(v) => (detailStatus = v)"
+          >
+            <SelectTrigger class="h-11 bg-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem
+                  v-for="item in statusItems"
+                  :key="`detail-${item.value}`"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div
+            v-if="detailStatus === 'received'"
+            class="space-y-4 rounded-lg border border-neutral-200 bg-white p-3"
+          >
+            <div class="space-y-2">
+              <Label>{{ t("receivedNote") }}</Label>
+              <Input v-model="detailReceivedNote" class="h-11" />
+            </div>
+            <div class="space-y-2">
+              <Label>{{ t("receivedProof") }}</Label>
+              <UploadImage
+                v-model="detailReceivedProofFile"
+                :existing-images="detailExistingReceivedProof"
+                :show-existing="
+                  detailExistingReceivedProof.length > 0 &&
+                  !detailReceivedProofFile
+                "
+                @existing-removed="detailExistingReceivedProof = []"
+              />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <Button
+              v-if="detailItem.status === 'received'"
+              type="button"
+              variant="outline"
+              class="h-11 w-full"
+              @click="cancelStatusEdit"
+            >
+              {{ t("cancel") }}
+            </Button>
+            <Button
+              type="button"
+              class="h-11 w-full"
+              :class="detailItem.status === 'received' ? '' : 'col-span-2'"
+              :loading="savingDetailStatus"
+              @click="saveDetailStatus"
+            >
+              {{ t("updateStatus") }}
+            </Button>
+          </div>
+        </div>
+
+        <!-- Status badge only (non-editors) -->
+        <div
+          v-else-if="!canManageStatus"
+          class="flex items-center justify-between rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3"
+        >
+          <span class="text-xs text-neutral-500">{{ t("purchasingStatus") }}</span>
+          <Badge :class="statusBadgeClass(detailItem.status)">
+            {{ labelStatus(detailItem.status) }}
+          </Badge>
+        </div>
+
         <div class="grid gap-3 sm:grid-cols-2">
-          <div>
+          <div class="sm:col-span-2">
             <div class="text-xs text-neutral-500">{{ t("itemName") }}</div>
             <div class="whitespace-pre-line font-medium">
               {{ detailItem.item_name }}
@@ -1112,13 +1423,9 @@ onMounted(async () => {
           </div>
           <div>
             <div class="text-xs text-neutral-500">{{ t("urgency") }}</div>
-            <div>{{ labelUrgency(detailItem.urgency) }}</div>
-          </div>
-          <div>
-            <div class="text-xs text-neutral-500">
-              {{ t("purchasingStatus") }}
-            </div>
-            <div>{{ labelStatus(detailItem.status) }}</div>
+            <Badge :class="urgencyBadgeClass(detailItem.urgency)">
+              {{ labelUrgency(detailItem.urgency) }}
+            </Badge>
           </div>
           <div>
             <div class="text-xs text-neutral-500">
@@ -1137,14 +1444,22 @@ onMounted(async () => {
           <div class="mb-2 text-xs text-neutral-500">
             {{ t("purchasingPicture") }}
           </div>
-          <img
-            :src="getImageUrl(detailItem.picture)"
-            alt=""
-            class="max-h-48 rounded-lg border border-neutral-200 object-contain"
-          />
+          <button
+            type="button"
+            class="block"
+            @click="openImagePreview(detailItem.picture)"
+          >
+            <img
+              :src="getImageUrl(detailItem.picture)"
+              alt=""
+              class="max-h-48 rounded-lg border border-neutral-200 object-contain transition-opacity hover:opacity-80"
+            />
+          </button>
         </div>
+
+        <!-- Received display for viewers (non status managers) -->
         <div
-          v-if="detailItem.status === 'received'"
+          v-if="detailItem.status === 'received' && !canManageStatus"
           class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-3"
         >
           <div>
@@ -1161,11 +1476,17 @@ onMounted(async () => {
             <div class="mb-2 text-xs text-neutral-500">
               {{ t("receivedProof") }}
             </div>
-            <img
-              :src="getImageUrl(detailItem.received_proof_image)"
-              alt=""
-              class="max-h-48 rounded-lg border border-neutral-200 object-contain"
-            />
+            <button
+              type="button"
+              class="block w-full"
+              @click="openImagePreview(detailItem.received_proof_image)"
+            >
+              <img
+                :src="getImageUrl(detailItem.received_proof_image)"
+                alt=""
+                class="max-h-48 rounded-lg border border-neutral-200 object-contain transition-opacity hover:opacity-80"
+              />
+            </button>
           </div>
         </div>
       </div>
@@ -1173,6 +1494,10 @@ onMounted(async () => {
         <Button
           variant="outline"
           type="button"
+          class="h-11 w-full"
+          :class="
+            detailItem && canEditRow(detailItem) ? '' : 'col-span-2'
+          "
           @click="showDetailModal = false"
         >
           {{ t("cancel") }}
@@ -1180,7 +1505,7 @@ onMounted(async () => {
         <Button
           v-if="detailItem && canEditRow(detailItem)"
           type="button"
-          class="h-11"
+          class="h-11 w-full"
           @click="openEdit(detailItem)"
         >
           {{ t("editPurchasing") }}
@@ -1197,5 +1522,26 @@ onMounted(async () => {
       @confirm="confirmDelete"
       @cancel="showDeleteModal = false"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="previewImageUrl"
+        class="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+        @click.self="previewImageUrl = null"
+      >
+        <button
+          type="button"
+          class="absolute top-4 right-4 rounded-lg bg-white/90 p-2 text-neutral-900 hover:bg-white"
+          @click="previewImageUrl = null"
+        >
+          <X class="h-5 w-5" />
+        </button>
+        <img
+          :src="previewImageUrl"
+          alt=""
+          class="max-h-[90vh] max-w-full rounded-lg object-contain shadow-lg"
+        />
+      </div>
+    </Teleport>
   </AppShell>
 </template>
