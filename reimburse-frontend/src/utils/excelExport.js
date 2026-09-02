@@ -1,5 +1,5 @@
 import { formatCurrency } from "./formatters";
-import { translateText } from "./translator";
+import { formatBilingualExportStack, translateText } from "./translator";
 
 function sanitizeFileName(name) {
   if (!name || name.trim() === "") {
@@ -25,10 +25,11 @@ export async function exportExcel(
   const dataRows = await Promise.all(
     (entries || []).map(async (entry, index) => {
       const currency = entry.Currency || "IDR";
-      const [translatedCategory, translatedNote] = await Promise.all([
-        translateText(entry.Category || ""),
-        translateText(entry.Note || "-"),
-      ]);
+      const translatedCategory =
+        formatBilingualExportStack(entry.Category || "") ||
+        entry.Category ||
+        "";
+      const translatedNote = await translateText(entry.Note || "-");
 
       return {
         "序号 / No.": index + 1,

@@ -67,7 +67,7 @@ async function convertImageToDataURL(imageUrl) {
 }
 
 import { formatCurrency } from "./formatters";
-import { translateText } from "./translator";
+import { formatBilingualExportStack, translateText } from "./translator";
 
 // Sanitize filename
 function sanitizeFileName(name) {
@@ -78,6 +78,57 @@ function sanitizeFileName(name) {
     .replace(/[<>:"/\\|?*]/g, "")
     .replace(/\s+/g, "_")
     .trim();
+}
+
+function isMobilePdfViewer() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /Android|webOS|iPhone|iPad|iPod|Mobile|DingTalk/i.test(ua);
+}
+
+function triggerPdfDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Desktop: force file download. Mobile: open viewer with download fallback. */
+function deliverPdf(pdfMake, docDefinition, fileName) {
+  return new Promise((resolve, reject) => {
+    try {
+      pdfMake.createPdf(docDefinition).getBlob((blob) => {
+        if (!blob) {
+          reject(new Error("Failed to generate PDF"));
+          return;
+        }
+
+        const safeName = `${sanitizeFileName(fileName)}.pdf`;
+
+        if (isMobilePdfViewer()) {
+          const url = URL.createObjectURL(blob);
+          const opened = window.open(url, "_blank");
+          if (!opened) {
+            triggerPdfDownload(blob, safeName);
+          } else {
+            // Keep blob URL alive long enough for in-app browsers to render it.
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          }
+        } else {
+          triggerPdfDownload(blob, safeName);
+        }
+
+        resolve(true);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 // Bilingual cell helper: Chinese on top, English below
@@ -135,11 +186,10 @@ export async function exportPDF(listName, entries, total, userName = "") {
             };
           }
         }
-        // Translate category and note
-        const [translatedCategory, translatedNote] = await Promise.all([
-          translateText(item.Category),
-          translateText(item.Note || "-"),
-        ]);
+        // Categories are stored bilingual — parse locally; notes may need translation.
+        const translatedCategory =
+          formatBilingualExportStack(item.Category) || item.Category || "";
+        const translatedNote = await translateText(item.Note || "-");
 
         return [
           (index + 1).toString(),
@@ -269,24 +319,7 @@ export async function exportPDF(listName, entries, total, userName = "") {
       },
     };
 
-    const fileName = sanitizeFileName(listName);
-    // Generate PDF blob and open it (works better on mobile)
-    pdfMake.createPdf(docDefinition).getBlob((blob) => {
-      const url = URL.createObjectURL(blob);
-      // Open in new tab/window - works on both mobile and desktop
-      const opened = window.open(url, "_blank");
-      // If popup was blocked, fall back to download
-      if (!opened || opened.closed || typeof opened.closed === "undefined") {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${fileName}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-      // Clean up the object URL after a delay
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+    await deliverPdf(pdfMake, docDefinition, listName || "Reimbursement");
     return true;
   } catch (error) {
     console.error("PDF generation error:", error);
@@ -436,20 +469,7 @@ export async function exportAnalyticsPDF(
       },
     };
 
-    const fileName = sanitizeFileName(title || "Analytics");
-    pdfMake.createPdf(docDefinition).getBlob((blob) => {
-      const url = URL.createObjectURL(blob);
-      const opened = window.open(url, "_blank");
-      if (!opened || opened.closed || typeof opened.closed === "undefined") {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${fileName}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+    await deliverPdf(pdfMake, docDefinition, title || "Analytics");
     return true;
   } catch (error) {
     console.error("Analytics PDF generation error:", error);
