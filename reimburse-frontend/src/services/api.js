@@ -196,9 +196,19 @@ export default {
     return response.data;
   },
 
-  // Purchasing
+  // Purchasing (purchase orders)
   async getPurchasing(params = {}) {
     const response = await api.get("/purchasing", { params });
+    return response.data;
+  },
+
+  async getPurchasingColleagues(params = {}) {
+    const response = await api.get("/purchasing/colleagues", { params });
+    return response.data;
+  },
+
+  async getPurchasingOrder(id) {
+    const response = await api.get(`/purchasing/${id}`);
     return response.data;
   },
 

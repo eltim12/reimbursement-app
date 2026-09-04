@@ -174,6 +174,214 @@ async function migrate(existingDb = null) {
     }
 
     await db.query(`
+      CREATE TABLE IF NOT EXISTS purchasing_orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        company_id INT NOT NULL,
+        requestor_id INT NOT NULL,
+        created_by_id INT NOT NULL,
+        po_code VARCHAR(40) NOT NULL,
+        urgency VARCHAR(20) NOT NULL DEFAULT 'medium',
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        note TEXT,
+        request_date DATETIME NOT NULL,
+        received_proof_image VARCHAR(500),
+        received_note TEXT,
+        received_at DATETIME NULL,
+        status_updated_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_purchasing_orders_po_code (po_code),
+        INDEX idx_po_company (company_id),
+        INDEX idx_po_requestor (requestor_id),
+        INDEX idx_po_status (status),
+        INDEX idx_po_request_date (request_date),
+        CONSTRAINT fk_po_company
+          FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        CONSTRAINT fk_po_requestor
+          FOREIGN KEY (requestor_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_po_created_by
+          FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log("✓ purchasing_orders table");
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS purchasing_order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        item_name VARCHAR(255) NOT NULL,
+        quantity DECIMAL(12, 2) NOT NULL DEFAULT 1,
+        unit VARCHAR(40) NOT NULL DEFAULT 'pcs',
+        note TEXT,
+        picture VARCHAR(500),
+        category VARCHAR(40) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        supplier VARCHAR(255) NULL,
+        received_proof_image VARCHAR(500) NULL,
+        received_note TEXT NULL,
+        received_at DATETIME NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_poi_order (order_id),
+        CONSTRAINT fk_poi_order
+          FOREIGN KEY (order_id) REFERENCES purchasing_orders(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    console.log("✓ purchasing_order_items table");
+
+    if (!(await columnExists(db, "purchasing_order_items", "status"))) {
+      await db.query(
+        "ALTER TABLE purchasing_order_items ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER category",
+      );
+      console.log("✓ Added purchasing_order_items.status");
+    }
+    if (!(await columnExists(db, "purchasing_order_items", "supplier"))) {
+      await db.query(
+        "ALTER TABLE purchasing_order_items ADD COLUMN supplier VARCHAR(255) NULL AFTER status",
+      );
+      console.log("✓ Added purchasing_order_items.supplier");
+    }
+    if (!(await columnExists(db, "purchasing_order_items", "received_proof_image"))) {
+      await db.query(
+        "ALTER TABLE purchasing_order_items ADD COLUMN received_proof_image VARCHAR(500) NULL AFTER supplier",
+      );
+      console.log("✓ Added purchasing_order_items.received_proof_image");
+    }
+    if (!(await columnExists(db, "purchasing_order_items", "received_note"))) {
+      await db.query(
+        "ALTER TABLE purchasing_order_items ADD COLUMN received_note TEXT NULL AFTER received_proof_image",
+      );
+      console.log("✓ Added purchasing_order_items.received_note");
+    }
+    if (!(await columnExists(db, "purchasing_order_items", "received_at"))) {
+      await db.query(
+        "ALTER TABLE purchasing_order_items ADD COLUMN received_at DATETIME NULL AFTER received_note",
+      );
+      console.log("✓ Added purchasing_order_items.received_at");
+    }
+
+    // One-time migrate legacy single-item requests → PO + items
+    try {
+      const [[legacy]] = await db.query(
+        "SELECT COUNT(*) AS c FROM purchasing_requests",
+      );
+      const [[orders]] = await db.query(
+        "SELECT COUNT(*) AS c FROM purchasing_orders",
+      );
+      if (Number(legacy.c) > 0 && Number(orders.c) === 0) {
+        const [rows] = await db.query(
+          `SELECT * FROM purchasing_requests ORDER BY id ASC`,
+        );
+        for (const row of rows) {
+          const [co] = await db.query(
+            "SELECT slug FROM companies WHERE id = ?",
+            [row.company_id],
+          );
+          const slug = String(co[0]?.slug || "PO")
+            .trim()
+            .toUpperCase()
+            .replace(/[^A-Z0-9]+/g, "") || "PO";
+          const poCode = `${slug}-PO-${row.id}`;
+          const [ins] = await db.query(
+            `INSERT INTO purchasing_orders
+              (company_id, requestor_id, created_by_id, po_code, urgency, status,
+               note, request_date, received_proof_image, received_note, received_at,
+               status_updated_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              row.company_id,
+              row.requestor_id,
+              row.requestor_id,
+              poCode,
+              row.urgency || "medium",
+              row.status || "pending",
+              row.request_date,
+              row.received_proof_image || null,
+              row.received_note || null,
+              row.received_at || null,
+              row.status_updated_at || null,
+              row.created_at || null,
+              row.updated_at || null,
+            ],
+          );
+          await db.query(
+            `INSERT INTO purchasing_order_items
+              (order_id, item_name, quantity, unit, note, picture, category,
+               status, received_proof_image, received_note, received_at, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            [
+              ins.insertId,
+              row.item_name,
+              row.quantity,
+              row.unit || "pcs",
+              row.note || null,
+              row.picture || null,
+              row.category || "office",
+              row.status || "pending",
+              row.received_proof_image || null,
+              row.received_note || null,
+              row.received_at || null,
+            ],
+          );
+        }
+        console.log(`✓ Migrated ${rows.length} purchasing_requests → purchasing_orders`);
+      }
+    } catch (err) {
+      console.warn("purchasing legacy migrate:", err.message);
+    }
+
+    // Rewrite legacy PO codes (PO-YYYYMMDD-####) → {SLUG}-PO-{n}
+    try {
+      const [companies] = await db.query("SELECT id, slug FROM companies");
+      let rewritten = 0;
+      for (const company of companies) {
+        const slug = String(company.slug || "PO")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, "") || "PO";
+        const prefix = `${slug}-PO-`;
+        const [orders] = await db.query(
+          `SELECT id, po_code FROM purchasing_orders
+           WHERE company_id = ?
+           ORDER BY id ASC`,
+          [company.id],
+        );
+
+        const needsRewrite = orders.some((o) => {
+          const code = String(o.po_code || "");
+          if (!code.startsWith(prefix)) return true;
+          const num = code.slice(prefix.length);
+          return !/^\d+$/.test(num);
+        });
+        if (!needsRewrite || orders.length === 0) continue;
+
+        // Pass 1: temp codes to avoid unique collisions
+        for (const order of orders) {
+          await db.query(
+            "UPDATE purchasing_orders SET po_code = ? WHERE id = ?",
+            [`__TMP_PO_${order.id}`, order.id],
+          );
+        }
+        // Pass 2: final {SLUG}-PO-{n}
+        let seq = 1;
+        for (const order of orders) {
+          await db.query(
+            "UPDATE purchasing_orders SET po_code = ? WHERE id = ?",
+            [`${prefix}${seq}`, order.id],
+          );
+          seq += 1;
+          rewritten += 1;
+        }
+      }
+      if (rewritten > 0) {
+        console.log(`✓ Rewrote ${rewritten} purchasing PO codes to {SLUG}-PO-n`);
+      }
+    } catch (err) {
+      console.warn("purchasing PO code rewrite:", err.message);
+    }
+
+    await db.query(`
       CREATE TABLE IF NOT EXISTS lists (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT,
@@ -309,6 +517,8 @@ async function migrate(existingDb = null) {
       "entries",
       "categories",
       "purchasing_requests",
+      "purchasing_orders",
+      "purchasing_order_items",
     ];
     for (const table of required) {
       if (!(await tableExists(db, table))) {
