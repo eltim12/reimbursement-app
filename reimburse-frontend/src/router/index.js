@@ -86,10 +86,11 @@ router.beforeEach((to, from, next) => {
   }
 
   const isSuperadmin = user.role === "superadmin";
-  const canManageCategories =
+  const canViewCategories =
     isSuperadmin ||
-    ["management", "finance", "admin"].includes(user.role);
-  const canManageUsers = isSuperadmin || user.role === "management";
+    ["management", "finance", "admin", "stakeholder"].includes(user.role);
+  const canViewUsers =
+    isSuperadmin || user.role === "management" || user.role === "stakeholder";
   const canAccessPurchasing = isSuperadmin || !!user.purchasing_enabled;
 
   if (to.meta.requiresAuth && !isAuthenticated) {
@@ -107,12 +108,12 @@ router.beforeEach((to, from, next) => {
     return;
   }
 
-  if (to.meta.requiresUserAdmin && !canManageUsers) {
+  if (to.meta.requiresUserAdmin && !canViewUsers) {
     next("/");
     return;
   }
 
-  if (to.meta.requiresCategoryAdmin && !canManageCategories) {
+  if (to.meta.requiresCategoryAdmin && !canViewCategories) {
     next("/");
     return;
   }

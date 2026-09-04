@@ -34,7 +34,10 @@ import { useCompanies } from "@/composables/useCompanies";
 import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
-import { translateBilingualZhId } from "@/utils/translator";
+import {
+  pickLocaleFromBilingual,
+  translateBilingualZhId,
+} from "@/utils/translator";
 import { getUnitLabel, purchasingUnitItems } from "@/utils/units";
 import { cn } from "@/lib/utils";
 
@@ -51,12 +54,17 @@ const currentUser = computed(() => {
 });
 
 const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
+const isStakeholder = computed(
+  () => currentUser.value.role === "stakeholder",
+);
 const canFullEdit = computed(() => {
   const u = currentUser.value;
+  if (u.role === "stakeholder") return false;
   if (u.role === "superadmin") return true;
   if (u.role === "finance" || u.role === "management") return true;
   return !!u.purchasing_editor;
 });
+const canCreatePurchasing = computed(() => !isStakeholder.value);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -231,12 +239,20 @@ const labelStatus = (v) =>
 const formatQtyUnit = (item) =>
   `${item.quantity} ${labelUnit(item.unit)}`;
 
+/** Show ID or ZH line from stored bilingual text based on UI language. */
+const displayLocalized = (text) => {
+  if (!text || !String(text).trim()) return "";
+  const picked = pickLocaleFromBilingual(text, locale.value);
+  if (picked) return picked;
+  return String(text).trim().split(/\n+/)[0] || String(text);
+};
+
 const itemCountLabel = (n) => t("itemCount").replace("{n}", String(n ?? 0));
 
 const itemsPreview = (order) => {
   const items = order.items || [];
   if (!items.length) return "—";
-  const names = items.slice(0, 2).map((i) => i.item_name.split("\n")[0]);
+  const names = items.slice(0, 2).map((i) => displayLocalized(i.item_name));
   const more = items.length > 2 ? ` +${items.length - 2}` : "";
   return `${names.join(" · ")}${more}`;
 };
@@ -283,6 +299,7 @@ const detailItemStatuses = ref([]);
 const statusEditMode = ref(false);
 
 const canEditRow = (row) => {
+  if (isStakeholder.value) return false;
   if (!row || row.status === "received") return false;
   if (canFullEdit.value) return true;
   return (
@@ -818,7 +835,11 @@ onMounted(async () => {
             {{ t("purchasingSubtitle") }}
           </p>
         </div>
-        <Button class="h-11 gap-2" @click="openCreate">
+        <Button
+          v-if="canCreatePurchasing"
+          class="h-11 gap-2"
+          @click="openCreate"
+        >
           <Plus class="h-4 w-4" />
           {{ t("requestPurchasing") }}
         </Button>
@@ -1421,17 +1442,17 @@ onMounted(async () => {
                 >
                   <td class="px-3 py-2.5 text-neutral-500">{{ idx + 1 }}</td>
                   <td class="px-3 py-2.5">
-                    <div class="whitespace-pre-line font-medium">
-                      {{ item.item_name }}
+                    <div class="font-medium">
+                      {{ displayLocalized(item.item_name) }}
                     </div>
                     <div class="text-xs text-neutral-500">
                       {{ labelCategory(item.category) }}
                     </div>
                     <div
                       v-if="item.note"
-                      class="mt-1 whitespace-pre-line text-xs text-neutral-500"
+                      class="mt-1 text-xs text-neutral-500"
                     >
-                      {{ item.note }}
+                      {{ displayLocalized(item.note) }}
                     </div>
                   </td>
                   <td class="whitespace-nowrap px-3 py-2.5 font-mono">
@@ -1551,8 +1572,8 @@ onMounted(async () => {
                 :key="row.id"
                 class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3"
               >
-                <div class="text-sm font-medium line-clamp-2 whitespace-pre-line">
-                  {{ row.item_name }}
+                <div class="line-clamp-2 text-sm font-medium">
+                  {{ displayLocalized(row.item_name) }}
                 </div>
                 <div class="grid gap-3 sm:grid-cols-2">
                   <div class="space-y-2">

@@ -53,12 +53,26 @@ onMounted(async () => {
 });
 
 const isManagement = computed(() => user.value.role === "management");
+const isStakeholder = computed(() => user.value.role === "stakeholder");
 const isSuperadmin = computed(() => user.value.role === "superadmin");
+const hasFinanceModule = computed(() => {
+  const mods = user.value.mods;
+  if (!Array.isArray(mods)) return true; // legacy local JWT
+  return mods.includes("finance") || isSuperadmin.value;
+});
 const canManageCategories = computed(() =>
   ["management", "finance", "admin"].includes(user.value.role),
 );
+const canViewCategories = computed(
+  () => canManageCategories.value || isStakeholder.value,
+);
+const canViewUsers = computed(
+  () => isManagement.value || isStakeholder.value,
+);
 const canAccessPurchasing = computed(
-  () => isSuperadmin.value || !!user.value.purchasing_enabled,
+  () =>
+    hasFinanceModule.value &&
+    (isSuperadmin.value || !!user.value.purchasing_enabled),
 );
 
 const navItems = computed(() => {
@@ -130,7 +144,7 @@ const navItems = computed(() => {
       exact: true,
     });
   }
-  if (canManageCategories.value) {
+  if (canViewCategories.value) {
     items.push({
       to: "/categories",
       label: t("navCategories"),
@@ -138,7 +152,7 @@ const navItems = computed(() => {
       exact: true,
     });
   }
-  if (isManagement.value) {
+  if (canViewUsers.value) {
     items.push({
       to: "/users",
       label: t("navUsers"),

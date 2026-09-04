@@ -510,6 +510,58 @@ async function migrate(existingDb = null) {
       }
     }
 
+    // Platform SSO + list/entry tenancy
+    if (!(await columnExists(db, "users", "auth_user_id"))) {
+      await db.query(
+        "ALTER TABLE users ADD COLUMN auth_user_id VARCHAR(36) NULL UNIQUE AFTER id",
+      );
+      console.log("✓ users.auth_user_id");
+    }
+
+    if (!(await columnExists(db, "lists", "company_id"))) {
+      await db.query(
+        "ALTER TABLE lists ADD COLUMN company_id INT NULL AFTER user_id",
+      );
+      await db.query(`
+        UPDATE lists l
+        INNER JOIN users u ON u.id = l.user_id
+        SET l.company_id = u.company_id
+        WHERE l.company_id IS NULL
+      `);
+      console.log("✓ lists.company_id backfilled");
+    }
+    if (!(await indexExists(db, "lists", "idx_lists_company_id"))) {
+      try {
+        await db.query(
+          "ALTER TABLE lists ADD INDEX idx_lists_company_id (company_id)",
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!(await columnExists(db, "entries", "company_id"))) {
+      await db.query(
+        "ALTER TABLE entries ADD COLUMN company_id INT NULL AFTER list_id",
+      );
+      await db.query(`
+        UPDATE entries e
+        INNER JOIN lists l ON l.id = e.list_id
+        SET e.company_id = l.company_id
+        WHERE e.company_id IS NULL
+      `);
+      console.log("✓ entries.company_id backfilled");
+    }
+    if (!(await indexExists(db, "entries", "idx_entries_company_id"))) {
+      try {
+        await db.query(
+          "ALTER TABLE entries ADD INDEX idx_entries_company_id (company_id)",
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
     const required = [
       "companies",
       "users",

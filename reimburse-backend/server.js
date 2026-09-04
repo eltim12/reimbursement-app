@@ -18,6 +18,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET =
   process.env.JWT_SECRET || "your_super_secret_jwt_key_should_be_in_env";
+const PLATFORM_JWT_SECRET =
+  process.env.PLATFORM_JWT_SECRET ||
+  process.env.JWT_SECRET ||
+  "change-me-platform-jwt-secret-long-random";
+const PLATFORM_JWT_ISSUER =
+  process.env.PLATFORM_JWT_ISSUER || "http://localhost:3020";
+const PLATFORM_API_URL = (process.env.PLATFORM_API_URL || "http://localhost:3020").replace(
+  /\/$/,
+  "",
+);
 
 // Ensure public/images directory exists
 const publicImagesDir = path.join(__dirname, "public", "images");
@@ -47,7 +57,104 @@ const upload = multer({
   },
 });
 
-// Auth Middleware
+function isPlatformToken(decoded) {
+  return (
+    decoded &&
+    Array.isArray(decoded.mods) &&
+    typeof decoded.cid === "string" &&
+    typeof decoded.sub === "string"
+  );
+}
+
+async function resolveLocalCompanyId(decoded) {
+  if (decoded.plat) return null;
+  const slug = decoded.slug || "whtb";
+  const [rows] = await db.query(
+    "SELECT id, purchasing_enabled FROM companies WHERE slug = ? LIMIT 1",
+    [slug],
+  );
+  if (!rows.length) {
+    const [fallback] = await db.query(
+      "SELECT id, purchasing_enabled FROM companies ORDER BY id ASC LIMIT 1",
+    );
+    return fallback[0] || null;
+  }
+  return rows[0];
+}
+
+async function resolveFinanceUserFromPlatform(decoded) {
+  if (!decoded.mods?.includes("finance") && !decoded.plat) {
+    const err = new Error("Finance module not granted");
+    err.status = 403;
+    throw err;
+  }
+
+  const company = await resolveLocalCompanyId(decoded);
+  const companyId = company?.id ?? null;
+  const financeRole = decoded.roles?.finance || "user";
+
+  let users = [];
+  if (decoded.sub) {
+    [users] = await db.query(
+      `SELECT u.id, u.email, u.role, u.company_id, u.purchasing_editor, u.name,
+              c.purchasing_enabled
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+       WHERE u.auth_user_id = ? LIMIT 1`,
+      [decoded.sub],
+    );
+  }
+  if (!users.length && decoded.email) {
+    [users] = await db.query(
+      `SELECT u.id, u.email, u.role, u.company_id, u.purchasing_editor, u.name,
+              c.purchasing_enabled
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+       WHERE LOWER(u.email) = LOWER(?) LIMIT 1`,
+      [decoded.email],
+    );
+    if (users.length && decoded.sub) {
+      await db.query(
+        "UPDATE users SET auth_user_id = ? WHERE id = ? AND auth_user_id IS NULL",
+        [decoded.sub, users[0].id],
+      );
+    }
+  }
+
+  if (!users.length) {
+    const err = new Error(
+      "No finance account linked. Ask an admin to create your finance user.",
+    );
+    err.status = 403;
+    throw err;
+  }
+
+  const u = users[0];
+  const role = decoded.plat
+    ? "superadmin"
+    : financeRole || u.role || "user";
+  const purchasing_enabled = decoded.plat
+    ? true
+    : !!(
+        company?.purchasing_enabled ??
+        u.purchasing_enabled
+      );
+
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role,
+    company_id: decoded.plat ? null : companyId ?? u.company_id ?? null,
+    purchasing_editor: !!u.purchasing_editor,
+    purchasing_enabled,
+    platform: true,
+    auth_user_id: decoded.sub,
+    mods: decoded.mods || [],
+  };
+}
+
+// Auth Middleware — accepts platform JWT (preferred) or legacy local JWT
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -55,11 +162,42 @@ const authenticateToken = (req, res, next) => {
   if (!token)
     return res.status(401).json({ success: false, error: "Access denied" });
 
-  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
-    if (err)
-      return res.status(403).json({ success: false, error: "Invalid token" });
+  const tryPlatform = () =>
+    new Promise((resolve) => {
+      jwt.verify(
+        token,
+        PLATFORM_JWT_SECRET,
+        { issuer: PLATFORM_JWT_ISSUER },
+        (err, decoded) => {
+          if (err || !isPlatformToken(decoded)) resolve(null);
+          else resolve(decoded);
+        },
+      );
+    });
 
+  const tryLegacy = () =>
+    new Promise((resolve, reject) => {
+      jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) reject(err);
+        else resolve(decoded);
+      });
+    });
+
+  (async () => {
     try {
+      const platformDecoded = await tryPlatform();
+      if (platformDecoded) {
+        try {
+          req.user = await resolveFinanceUserFromPlatform(platformDecoded);
+          return next();
+        } catch (e) {
+          return res
+            .status(e.status || 403)
+            .json({ success: false, error: e.message });
+        }
+      }
+
+      const decoded = await tryLegacy();
       const [users] = await db.query(
         `SELECT u.id, u.email, u.role, u.company_id, u.purchasing_editor,
                 c.purchasing_enabled
@@ -78,27 +216,50 @@ const authenticateToken = (req, res, next) => {
         company_id: users[0].company_id ?? null,
         purchasing_editor: !!users[0].purchasing_editor,
         purchasing_enabled: !!users[0].purchasing_enabled,
+        platform: false,
       };
       next();
     } catch (error) {
       console.error("Auth lookup error:", error);
-      return res.status(500).json({ success: false, error: "Auth failed" });
+      return res
+        .status(403)
+        .json({ success: false, error: "Invalid token" });
     }
-  });
+  })();
 };
 
-const ALLOWED_ROLES = ["user", "admin", "management", "finance"];
+const ALLOWED_ROLES = [
+  "user",
+  "admin",
+  "management",
+  "finance",
+  "stakeholder",
+];
 const isSuperadmin = (user) => user?.role === "superadmin";
 const isManagement = (user) => user?.role === "management";
 const isFinance = (user) => user?.role === "finance";
+const isStakeholder = (user) => user?.role === "stakeholder";
 const isAdmin = (user) => user?.role === "admin";
+/** View all company lists (management/finance/stakeholder). */
 const canViewAllLists = (user) =>
   isSuperadmin(user) ||
-  ((isManagement(user) || isFinance(user)) && !!user?.company_id);
+  ((isManagement(user) || isFinance(user) || isStakeholder(user)) &&
+    !!user?.company_id);
+const listReadOnlyError = (user) =>
+  isStakeholder(user)
+    ? "Stakeholder users have read-only access"
+    : "Finance users have read-only access";
+/** List/entry write blocked (finance + stakeholder). */
+const isListReadOnly = (user) => isFinance(user) || isStakeholder(user);
+
 const canManageCategories = (user) =>
   isSuperadmin(user) ||
   ((isManagement(user) || isFinance(user) || isAdmin(user)) &&
     !!user?.company_id);
+/** View categories admin page (includes stakeholder read-only). */
+const canViewCategories = (user) =>
+  canManageCategories(user) ||
+  (isStakeholder(user) && !!user?.company_id);
 
 const requireManagement = (req, res, next) => {
   if (isSuperadmin(req.user)) return next();
@@ -108,6 +269,20 @@ const requireManagement = (req, res, next) => {
       .json({ success: false, error: "Management access required" });
   }
   next();
+};
+
+/** Management can edit users; stakeholder can only list them. */
+const requireUsersViewer = (req, res, next) => {
+  if (isSuperadmin(req.user)) return next();
+  if (
+    (isManagement(req.user) || isStakeholder(req.user)) &&
+    req.user.company_id
+  ) {
+    return next();
+  }
+  return res
+    .status(403)
+    .json({ success: false, error: "User list access required" });
 };
 
 const requireCategoryAdmin = (req, res, next) => {
@@ -193,6 +368,7 @@ require("./routes/purchasing")({
   isSuperadmin,
   isManagement,
   isFinance,
+  isStakeholder,
 });
 
 // Routes
@@ -213,6 +389,59 @@ app.post("/api/auth/register", (_req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    // Prefer platform SSO when configured
+    if (PLATFORM_API_URL) {
+      try {
+        const r = await fetch(`${PLATFORM_API_URL}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const body = await r.json().catch(() => ({}));
+        const data = body.data || body;
+        if (r.ok && data.accessToken) {
+          const decoded = jwt.verify(data.accessToken, PLATFORM_JWT_SECRET, {
+            issuer: PLATFORM_JWT_ISSUER,
+          });
+          if (isPlatformToken(decoded)) {
+            try {
+              const user = await resolveFinanceUserFromPlatform(decoded);
+              return res.json({
+                success: true,
+                token: data.accessToken,
+                refreshToken: data.refreshToken,
+                user: {
+                  id: user.id,
+                  email: user.email,
+                  name: user.name,
+                  role: user.role,
+                  company_id: user.company_id,
+                  purchasing_editor: user.purchasing_editor,
+                  purchasing_enabled: user.purchasing_enabled,
+                  mods: user.mods,
+                },
+              });
+            } catch (grantErr) {
+              return res.status(grantErr.status || 403).json({
+                success: false,
+                error: grantErr.message || "Finance module not granted",
+              });
+            }
+          }
+        }
+        // Platform rejected (wrong password / no finance grant) — fall through only if
+        // we want legacy; if user has no finance module, surface that error.
+        if (r.status === 403 || body.error?.includes?.("module")) {
+          return res.status(403).json({
+            success: false,
+            error: body.error || "Finance module not granted",
+          });
+        }
+      } catch (e) {
+        console.warn("Platform login unavailable, using local auth:", e.message);
+      }
+    }
 
     const [users] = await db.query("SELECT * FROM users WHERE email = ?", [
       email,
@@ -697,8 +926,8 @@ app.get(
   },
 );
 
-// Management / superadmin: list users (optional companyId for superadmin)
-app.get("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {
+// Management / stakeholder / superadmin: list users (optional companyId for superadmin)
+app.get("/api/admin/users", authenticateToken, requireUsersViewer, async (req, res) => {
   try {
     const scope = resolveCompanyFilter(req);
     if (scope.error) {
@@ -1013,7 +1242,10 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
-    const role = user.role || "user";
+    const role =
+      req.user.role === "superadmin"
+        ? "superadmin"
+        : user.role || "user";
     res.json({
       success: true,
       user: {
@@ -1024,7 +1256,10 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
         company_id: user.company_id ?? null,
         purchasing_editor: !!user.purchasing_editor,
         purchasing_enabled:
-          role === "superadmin" ? true : !!user.purchasing_enabled,
+          role === "superadmin"
+            ? true
+            : !!user.purchasing_enabled || !!req.user.purchasing_enabled,
+        mods: req.user.mods || ["finance"],
         createdAt: user.created_at,
       },
     });
@@ -1180,22 +1415,22 @@ app.get("/api/lists", authenticateToken, requireCompanyUser, async (req, res) =>
         [lists] = await db.query(
           `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
                   u.email AS owner_email, u.name AS owner_name,
-                  u.company_id AS company_id, c.name AS company_name
+                  COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
            FROM lists l
            INNER JOIN users u ON u.id = l.user_id
-           LEFT JOIN companies c ON c.id = u.company_id
-           WHERE u.company_id IS NOT NULL
+           LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
+           WHERE COALESCE(l.company_id, u.company_id) IS NOT NULL
            ORDER BY l.created_at DESC`,
         );
       } else {
         [lists] = await db.query(
           `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
                   u.email AS owner_email, u.name AS owner_name,
-                  u.company_id AS company_id, c.name AS company_name
+                  COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
            FROM lists l
            INNER JOIN users u ON u.id = l.user_id
-           LEFT JOIN companies c ON c.id = u.company_id
-           WHERE u.company_id = ?
+           LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
+           WHERE COALESCE(l.company_id, u.company_id) = ?
            ORDER BY l.created_at DESC`,
           [scope.companyId],
         );
@@ -1204,10 +1439,10 @@ app.get("/api/lists", authenticateToken, requireCompanyUser, async (req, res) =>
       [lists] = await db.query(
         `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
                 u.email AS owner_email, u.name AS owner_name,
-                u.company_id AS company_id, c.name AS company_name
+                COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
          FROM lists l
          LEFT JOIN users u ON u.id = l.user_id
-         LEFT JOIN companies c ON c.id = u.company_id
+         LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
          WHERE l.user_id = ?
          ORDER BY l.created_at DESC`,
         [req.user.id],
@@ -1318,7 +1553,12 @@ app.get("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res
 // Create a new list (Protected)
 app.post("/api/lists", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
-    if (isManagement(req.user) || isFinance(req.user) || isSuperadmin(req.user)) {
+    if (
+      isManagement(req.user) ||
+      isFinance(req.user) ||
+      isStakeholder(req.user) ||
+      isSuperadmin(req.user)
+    ) {
       return res.status(403).json({
         success: false,
         error: "This role cannot create lists",
@@ -1334,8 +1574,8 @@ app.post("/api/lists", authenticateToken, requireCompanyUser, async (req, res) =
     }
 
     const [result] = await db.query(
-      "INSERT INTO lists (user_id, name, total) VALUES (?, ?, ?)",
-      [req.user.id, name.trim(), 0],
+      "INSERT INTO lists (user_id, company_id, name, total) VALUES (?, ?, ?, ?)",
+      [req.user.id, req.user.company_id ?? null, name.trim(), 0],
     );
 
     res.json({
@@ -1358,10 +1598,10 @@ app.put("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res
     const { id } = req.params;
     const { name, entries, total } = req.body;
 
-    if (isFinance(req.user)) {
+    if (isListReadOnly(req.user)) {
       return res.status(403).json({
         success: false,
-        error: "Finance users have read-only access",
+        error: listReadOnlyError(req.user),
       });
     }
 
@@ -1438,8 +1678,10 @@ app.put("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res
             }
           }
 
+          const companyId = req.user.company_id ?? null;
           const values = entries.map((entry) => [
             id,
+            companyId,
             entry.Date, // Date format: YYYY-MM-DD
             entry.Category,
             entry.Note || null,
@@ -1448,7 +1690,7 @@ app.put("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res
           ]);
 
           await connection.query(
-            "INSERT INTO entries (list_id, date, category, note, amount, proof_image) VALUES ?",
+            "INSERT INTO entries (list_id, company_id, date, category, note, amount, proof_image) VALUES ?",
             [values],
           );
         }
@@ -1473,10 +1715,10 @@ app.delete("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, 
   try {
     const { id } = req.params;
 
-    if (isFinance(req.user)) {
+    if (isListReadOnly(req.user)) {
       return res.status(403).json({
         success: false,
-        error: "Finance users have read-only access",
+        error: listReadOnlyError(req.user),
       });
     }
 
@@ -2015,10 +2257,10 @@ app.put(
       const { id } = req.params;
       const { Date: date, Category, Note, Amount, Proof } = req.body;
 
-      if (isFinance(req.user)) {
+      if (isListReadOnly(req.user)) {
         return res.status(403).json({
           success: false,
-          error: "Finance users have read-only access",
+          error: listReadOnlyError(req.user),
         });
       }
 
@@ -2167,10 +2409,10 @@ app.delete(
       ) {
         return res.status(403).json({ success: false, error: "Access denied" });
       }
-      if (isFinance(req.user)) {
+      if (isListReadOnly(req.user)) {
         return res.status(403).json({
           success: false,
-          error: "Finance users have read-only access",
+          error: listReadOnlyError(req.user),
         });
       }
 

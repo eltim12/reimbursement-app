@@ -37,7 +37,11 @@ const currentUser = computed(() => {
 });
 
 const isManagement = computed(() => currentUser.value.role === "management");
+const isStakeholder = computed(() => currentUser.value.role === "stakeholder");
 const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
+const canViewUsers = computed(
+  () => isManagement.value || isStakeholder.value || isSuperadmin.value,
+);
 const canManageUsers = computed(
   () => isManagement.value || isSuperadmin.value,
 );
@@ -68,6 +72,7 @@ const roleItems = computed(() => [
   { label: t("roleAdmin"), value: "admin" },
   { label: t("roleManagement"), value: "management" },
   { label: t("roleFinance"), value: "finance" },
+  { label: t("roleStakeholder"), value: "stakeholder" },
 ]);
 
 const companyFormItems = computed(() =>
@@ -244,7 +249,7 @@ const confirmDeleteUser = async () => {
 };
 
 onMounted(async () => {
-  if (!canManageUsers.value) {
+  if (!canViewUsers.value) {
     router.replace("/");
     return;
   }
@@ -264,8 +269,18 @@ onMounted(async () => {
             {{ t("navUsers") }}
           </h1>
           <p class="text-sm text-neutral-500">{{ t("usersSubtitle") }}</p>
+          <p class="mt-2 text-sm text-neutral-600">
+            Module access (finance / HR) is managed in the
+            <a
+              class="font-medium text-neutral-900 underline underline-offset-2"
+              href="https://admin.whtb.glass"
+              target="_blank"
+              rel="noopener noreferrer"
+              >platform console</a
+            >.
+          </p>
         </div>
-        <Button class="h-10" @click="openCreate">
+        <Button v-if="canManageUsers" class="h-10" @click="openCreate">
           <Plus class="h-4 w-4" />
           {{ t("createUser") }}
         </Button>
@@ -356,6 +371,7 @@ onMounted(async () => {
                   {{ t("createdAt") }}
                 </th>
                 <th
+                  v-if="canManageUsers"
                   class="whitespace-nowrap px-4 py-3 text-right font-medium text-neutral-500"
                 >
                   {{ t("tableAction") }}
@@ -365,7 +381,7 @@ onMounted(async () => {
             <tbody>
               <tr v-if="loading">
                 <td
-                  :colspan="isSuperadmin ? 7 : 6"
+                  :colspan="(isSuperadmin ? 6 : 5) + (canManageUsers ? 1 : 0)"
                   class="px-4 py-8 text-center text-neutral-500"
                 >
                   Loading…
@@ -373,7 +389,7 @@ onMounted(async () => {
               </tr>
               <tr v-else-if="filteredUsers.length === 0">
                 <td
-                  :colspan="isSuperadmin ? 7 : 6"
+                  :colspan="(isSuperadmin ? 6 : 5) + (canManageUsers ? 1 : 0)"
                   class="px-4 py-8 text-center text-neutral-500"
                 >
                   {{ t("noUsers") }}
@@ -399,7 +415,9 @@ onMounted(async () => {
                 </td>
                 <td class="whitespace-nowrap px-4 py-3 text-neutral-600">
                   {{
-                    user.role === "finance" || user.role === "management"
+                    user.role === "finance" ||
+                    user.role === "management" ||
+                    user.role === "stakeholder"
                       ? t("purchasingFeatureOn")
                       : user.purchasing_editor
                         ? t("purchasingFeatureOn")
@@ -413,7 +431,7 @@ onMounted(async () => {
                       : "—"
                   }}
                 </td>
-                <td class="whitespace-nowrap px-4 py-3 text-right">
+                <td v-if="canManageUsers" class="whitespace-nowrap px-4 py-3 text-right">
                   <div class="inline-flex gap-1">
                     <Button
                       variant="ghost"
@@ -508,7 +526,9 @@ onMounted(async () => {
               type="checkbox"
               class="mt-1 h-4 w-4 rounded border-neutral-300"
               :disabled="
-                form.role === 'finance' || form.role === 'management'
+                form.role === 'finance' ||
+                form.role === 'management' ||
+                form.role === 'stakeholder'
               "
             />
             <span>

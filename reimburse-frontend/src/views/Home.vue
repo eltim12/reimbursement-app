@@ -37,14 +37,25 @@ const currentUser = computed(() => {
 });
 const isManagement = computed(() => currentUser.value.role === "management");
 const isFinance = computed(() => currentUser.value.role === "finance");
+const isStakeholder = computed(() => currentUser.value.role === "stakeholder");
 const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
 const canViewAllLists = computed(
-  () => isManagement.value || isFinance.value || isSuperadmin.value,
+  () =>
+    isManagement.value ||
+    isFinance.value ||
+    isStakeholder.value ||
+    isSuperadmin.value,
 );
 const canCreateLists = computed(
-  () => !isManagement.value && !isFinance.value && !isSuperadmin.value,
+  () =>
+    !isManagement.value &&
+    !isFinance.value &&
+    !isStakeholder.value &&
+    !isSuperadmin.value,
 );
-const canDeleteLists = computed(() => !isFinance.value);
+const canDeleteLists = computed(
+  () => !isFinance.value && !isStakeholder.value,
+);
 const listTableColspan = computed(() => {
   let cols = 2; // name + createdAt
   if (canViewAllLists.value) cols += 1;

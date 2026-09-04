@@ -51,7 +51,9 @@ const currentUser = computed(() => {
     return {};
   }
 });
-const isReadOnly = computed(() => currentUser.value.role === "finance");
+const isReadOnly = computed(() =>
+  ["finance", "stakeholder"].includes(currentUser.value.role),
+);
 
 const currencyItems = computed(() => [
   { label: "IDR", value: "IDR" },

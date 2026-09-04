@@ -27,6 +27,12 @@ const SYSTEM_USERS = [
     name: "Finance",
     role: "finance",
   },
+  {
+    email: "stakeholder@whtb.com",
+    password: "StakeholderView88!",
+    name: "Stakeholder",
+    role: "stakeholder",
+  },
 ];
 
 function shouldResetPasswords() {

@@ -33,6 +33,7 @@ const roleItems = computed(() => [
   { label: t("roleAdmin"), value: "admin" },
   { label: t("roleManagement"), value: "management" },
   { label: t("roleFinance"), value: "finance" },
+  { label: t("roleStakeholder"), value: "stakeholder" },
 ]);
 
 const roleLabel = computed(() => {

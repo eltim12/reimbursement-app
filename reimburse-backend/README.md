@@ -47,6 +47,7 @@ On startup the server also runs migrate + seed automatically (idempotent).
 |---|---|---|
 | `admin@whtb.com` | management | `Wuhuatianbao88!` |
 | `finance@whtb.com` | finance | `BankOfChina88!` |
+| `stakeholder@whtb.com` | stakeholder (read-only) | `StakeholderView88!` |
 
 Set `SEED_RESET_PASSWORDS=false` after first deploy if you change those passwords and do not want them overwritten on restart.
 
@@ -54,16 +55,18 @@ Set `RUN_SEEDS=false` to skip seeding on server start (migrate still runs).
 
 ## VPS deploy
 
+Full beginner guide (domains, PM2, nginx, frontend + backend redeploy):
+
+**[../docs/VPS-DEPLOY.md](../docs/VPS-DEPLOY.md)**
+
+Short backend update on the live VPS (`187.53.132.155`):
+
 ```bash
-# On the VPS, after pulling new code:
+cd /root/reimbursement-app
+git pull origin main
 cd reimburse-backend
 npm install --production
-cp -n .env.example .env   # only if .env does not exist yet
-# edit .env with production DB + JWT_SECRET
-npm run db:setup
-npm start
-# or with pm2:
-# pm2 restart reimburse-api || pm2 start server.js --name reimburse-api
+pm2 restart reimbursement
 ```
 
 Because migrate/seed are idempotent, restarting the app after deploy is enough to apply schema updates and ensure system users exist.

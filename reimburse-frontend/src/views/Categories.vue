@@ -40,9 +40,18 @@ const currentUser = computed(() => {
 });
 
 const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
-const canManage = computed(() =>
-  isSuperadmin.value ||
-  ["management", "finance", "admin"].includes(currentUser.value.role),
+const isStakeholder = computed(() => currentUser.value.role === "stakeholder");
+const canAccess = computed(
+  () =>
+    isSuperadmin.value ||
+    ["management", "finance", "admin", "stakeholder"].includes(
+      currentUser.value.role,
+    ),
+);
+const canManage = computed(
+  () =>
+    isSuperadmin.value ||
+    ["management", "finance", "admin"].includes(currentUser.value.role),
 );
 
 const loading = ref(false);
@@ -201,7 +210,7 @@ const confirmDelete = async () => {
 };
 
 onMounted(async () => {
-  if (!canManage.value) {
+  if (!canAccess.value) {
     router.replace("/");
     return;
   }
@@ -222,7 +231,7 @@ onMounted(async () => {
           </h1>
           <p class="text-sm text-neutral-500">{{ t("categoriesSubtitle") }}</p>
         </div>
-        <Button class="h-11" @click="openCreate">
+        <Button v-if="canManage" class="h-11" @click="openCreate">
           <Plus class="h-4 w-4" />
           {{ t("addCategory") }}
         </Button>
@@ -291,7 +300,10 @@ onMounted(async () => {
                   <th class="px-4 py-3 font-medium text-neutral-500">
                     {{ t("categoryPreview") }}
                   </th>
-                  <th class="px-4 py-3 text-right font-medium text-neutral-500">
+                  <th
+                    v-if="canManage"
+                    class="px-4 py-3 text-right font-medium text-neutral-500"
+                  >
                     {{ t("tableAction") }}
                   </th>
                 </tr>
@@ -339,7 +351,7 @@ onMounted(async () => {
                       ({{ locale === "zh" ? "ZH" : "ID" }})
                     </span>
                   </td>
-                  <td class="px-4 py-3">
+                  <td v-if="canManage" class="px-4 py-3">
                     <div class="flex justify-end gap-2">
                       <Button
                         variant="outline"

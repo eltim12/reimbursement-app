@@ -11,6 +11,7 @@ module.exports = function registerPurchasingRoutes({
   isSuperadmin,
   isManagement,
   isFinance,
+  isStakeholder,
 }) {
   const ITEM_STATUSES = [
     "pending",
@@ -24,10 +25,20 @@ module.exports = function registerPurchasingRoutes({
   const CATEGORIES = ["office", "production"];
 
   const canFullEditPurchasing = (user) => {
+    if (isStakeholder(user)) return false;
     if (isSuperadmin(user)) return true;
     if (!user?.company_id) return false;
     if (isFinance(user) || isManagement(user)) return true;
     return !!user.purchasing_editor;
+  };
+
+  const denyIfStakeholder = (req, res) => {
+    if (!isStakeholder(req.user)) return false;
+    res.status(403).json({
+      success: false,
+      error: "Stakeholder users have read-only access",
+    });
+    return true;
   };
 
   const formatDateTime = (value) => {
@@ -572,6 +583,8 @@ module.exports = function registerPurchasingRoutes({
     requireCompanyUser,
     async (req, res) => {
       try {
+        if (denyIfStakeholder(req, res)) return;
+
         const scope = resolveCompanyFilter(req, { required: true });
         if (scope.error) {
           return res.status(400).json({ success: false, error: scope.error });
@@ -643,6 +656,8 @@ module.exports = function registerPurchasingRoutes({
     requireCompanyUser,
     async (req, res) => {
       try {
+        if (denyIfStakeholder(req, res)) return;
+
         const existing = await loadOrder(req.params.id);
         if (!existing) {
           return res
@@ -886,6 +901,8 @@ module.exports = function registerPurchasingRoutes({
     requireCompanyUser,
     async (req, res) => {
       try {
+        if (denyIfStakeholder(req, res)) return;
+
         const existing = await loadOrder(req.params.id);
         if (!existing) {
           return res

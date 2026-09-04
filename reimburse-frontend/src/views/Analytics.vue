@@ -58,7 +58,7 @@ const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
 const canAccess = computed(() => !!currentUser.value?.id || !!currentUser.value?.email);
 const canFilterOwners = computed(() =>
   isSuperadmin.value ||
-  ["management", "finance"].includes(currentUser.value.role),
+  ["management", "finance", "stakeholder"].includes(currentUser.value.role),
 );
 
 const loading = ref(false);
