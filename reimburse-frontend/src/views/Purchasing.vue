@@ -35,6 +35,7 @@ import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import { translateBilingualZhId } from "@/utils/translator";
+import { getUnitLabel, purchasingUnitItems } from "@/utils/units";
 import { cn } from "@/lib/utils";
 
 const { t, locale } = useI18n();
@@ -119,6 +120,7 @@ function emptyForm() {
   return {
     item_name: "",
     quantity: 1,
+    unit: "pcs",
     note: "",
     pictureFile: null,
     urgency: "medium",
@@ -133,6 +135,8 @@ const categoryItems = computed(() => [
   { value: "office", label: t("purchasingCatOffice") },
   { value: "production", label: t("purchasingCatProduction") },
 ]);
+
+const unitItems = computed(() => purchasingUnitItems(locale.value));
 
 const urgencyItems = computed(() => [
   { value: "low", label: t("urgencyLow") },
@@ -203,10 +207,14 @@ const openImagePreview = (path) => {
 
 const labelCategory = (v) =>
   categoryItems.value.find((i) => i.value === v)?.label || v;
+const labelUnit = (v) => getUnitLabel(v, locale.value) || v || "pcs";
 const labelUrgency = (v) =>
   urgencyItems.value.find((i) => i.value === v)?.label || v;
 const labelStatus = (v) =>
   statusItems.value.find((i) => i.value === v)?.label || v;
+
+const formatQtyUnit = (row) =>
+  `${row.quantity} ${labelUnit(row.unit)}`;
 
 const urgencyBadgeClass = (urgency) => {
   switch (urgency) {
@@ -394,6 +402,7 @@ const openEdit = (row) => {
   form.value = {
     item_name: row.item_name,
     quantity: row.quantity,
+    unit: row.unit || "pcs",
     note: row.note || "",
     pictureFile: null,
     urgency: row.urgency,
@@ -469,6 +478,7 @@ const saveDetailStatus = async () => {
     const payload = {
       item_name: detailItem.value.item_name,
       quantity: detailItem.value.quantity,
+      unit: detailItem.value.unit || "pcs",
       note: detailItem.value.note || "",
       picture: detailItem.value.picture || null,
       urgency: detailItem.value.urgency,
@@ -531,6 +541,10 @@ const save = async () => {
     showToast(t("quantityRequired"), "error");
     return;
   }
+  if (!form.value.unit) {
+    showToast(t("unitRequired"), "error");
+    return;
+  }
   if (
     isSuperadmin.value &&
     formMode.value === "create" &&
@@ -584,6 +598,7 @@ const save = async () => {
     const payload = {
       item_name: form.value.item_name.trim(),
       quantity: Number(form.value.quantity),
+      unit: form.value.unit || "pcs",
       note: form.value.note.trim(),
       picture,
       urgency: form.value.urgency,
@@ -829,7 +844,7 @@ onMounted(async () => {
                   </div>
                 </td>
                 <td class="whitespace-nowrap px-4 py-3 font-mono">
-                  {{ row.quantity }}
+                  {{ formatQtyUnit(row) }}
                 </td>
                 <td class="px-4 py-3" @click.stop>
                   <button
@@ -1136,16 +1151,29 @@ onMounted(async () => {
             {{ translatingName ? t("translating") : t("bilingualAutoHint") }}
           </p>
         </div>
-        <div class="space-y-2">
-          <Label>{{ t("quantity") }}</Label>
-          <Input
-            v-model="form.quantity"
-            type="number"
-            min="0.01"
-            step="any"
-            class="h-11 font-mono"
-            required
-          />
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="space-y-2">
+            <Label>{{ t("quantity") }}</Label>
+            <Input
+              v-model="form.quantity"
+              type="number"
+              min="0.01"
+              step="any"
+              class="h-11 font-mono"
+              required
+            />
+          </div>
+          <div class="space-y-2">
+            <Label>{{ t("unit") }}</Label>
+            <Combobox
+              :model-value="form.unit"
+              :items="unitItems"
+              :placeholder="t('selectUnit')"
+              :search-placeholder="t('searchUnit')"
+              :empty-text="t('noUnitResults')"
+              @update:model-value="(v) => (form.unit = v)"
+            />
+          </div>
         </div>
         <div class="space-y-2">
           <Label>{{ t("specsNote") }}</Label>
@@ -1402,7 +1430,7 @@ onMounted(async () => {
           </div>
           <div>
             <div class="text-xs text-neutral-500">{{ t("quantity") }}</div>
-            <div class="font-mono">{{ detailItem.quantity }}</div>
+            <div class="font-mono">{{ formatQtyUnit(detailItem) }}</div>
           </div>
           <div>
             <div class="text-xs text-neutral-500">{{ t("requestDate") }}</div>

@@ -126,6 +126,7 @@ async function migrate(existingDb = null) {
         requestor_id INT NOT NULL,
         item_name VARCHAR(255) NOT NULL,
         quantity DECIMAL(12, 2) NOT NULL DEFAULT 1,
+        unit VARCHAR(40) NOT NULL DEFAULT 'pcs',
         note TEXT,
         picture VARCHAR(500),
         urgency VARCHAR(20) NOT NULL DEFAULT 'medium',
@@ -149,6 +150,13 @@ async function migrate(existingDb = null) {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log("✓ purchasing_requests table");
+
+    if (!(await columnExists(db, "purchasing_requests", "unit"))) {
+      await db.query(
+        "ALTER TABLE purchasing_requests ADD COLUMN unit VARCHAR(40) NOT NULL DEFAULT 'pcs' AFTER quantity",
+      );
+      console.log("✓ Added purchasing_requests.unit column");
+    }
 
     // Upgrade legacy DATE → DATETIME for request_date
     try {

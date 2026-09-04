@@ -48,6 +48,7 @@ module.exports = function registerPurchasingRoutes({
       requestor_email: row.requestor_email || "",
       item_name: row.item_name,
       quantity: Number(row.quantity),
+      unit: row.unit || "pcs",
       note: row.note || "",
       picture: row.picture || null,
       urgency: row.urgency,
@@ -225,6 +226,7 @@ module.exports = function registerPurchasingRoutes({
 
         const item_name = String(req.body.item_name || "").trim();
         const quantity = Number(req.body.quantity);
+        const unit = String(req.body.unit || "pcs").trim() || "pcs";
         const note = String(req.body.note || "").trim();
         const picture = req.body.picture ? String(req.body.picture) : null;
         const urgency = URGENCIES.includes(req.body.urgency)
@@ -255,14 +257,15 @@ module.exports = function registerPurchasingRoutes({
 
         const [result] = await db.query(
           `INSERT INTO purchasing_requests
-            (company_id, requestor_id, item_name, quantity, note, picture,
+            (company_id, requestor_id, item_name, quantity, unit, note, picture,
              urgency, status, category, request_date, status_updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(), NOW())`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(), NOW())`,
           [
             scope.companyId,
             requestorId,
             item_name,
             quantity,
+            unit,
             note || null,
             picture,
             urgency,
@@ -321,6 +324,10 @@ module.exports = function registerPurchasingRoutes({
         const quantity = Number(
           req.body.quantity != null ? req.body.quantity : row.quantity,
         );
+        const unit = String(
+          req.body.unit != null ? req.body.unit : row.unit || "pcs",
+        )
+          .trim() || "pcs";
         const note =
           req.body.note != null
             ? String(req.body.note).trim()
@@ -402,7 +409,7 @@ module.exports = function registerPurchasingRoutes({
 
         await db.query(
           `UPDATE purchasing_requests SET
-            item_name = ?, quantity = ?, note = ?, picture = ?,
+            item_name = ?, quantity = ?, unit = ?, note = ?, picture = ?,
             urgency = ?, category = ?,
             status = ?, received_proof_image = ?, received_note = ?,
             received_at = ?, status_updated_at = ?
@@ -410,6 +417,7 @@ module.exports = function registerPurchasingRoutes({
           [
             item_name,
             quantity,
+            unit,
             note || null,
             picture,
             urgency,
