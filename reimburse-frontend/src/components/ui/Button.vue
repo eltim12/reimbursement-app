@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { cn } from "@/lib/utils";
+import Spinner from "./Spinner.vue";
 
 const props = defineProps({
   variant: {
@@ -48,10 +49,7 @@ const classes = computed(() =>
 
 <template>
   <button :type="type" :class="classes" :disabled="disabled || loading">
-    <span
-      v-if="loading"
-      class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-    />
+    <Spinner v-if="loading" data-icon="inline-start" />
     <slot />
   </button>
 </template>

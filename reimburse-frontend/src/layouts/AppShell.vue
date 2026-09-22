@@ -13,6 +13,7 @@ import {
   Users,
   Building2,
   ShoppingCart,
+  LayoutGrid,
   X,
 } from "@lucide/vue";
 import LangToggle from "@/components/LangToggle.vue";
@@ -74,6 +75,21 @@ const canAccessPurchasing = computed(
     hasFinanceModule.value &&
     (isSuperadmin.value || !!user.value.purchasing_enabled),
 );
+
+const PORTAL_URL = (
+  import.meta.env.VITE_PORTAL_URL || "https://app.whtb.glass"
+).replace(/\/$/, "");
+
+const showPortalLink = computed(() => {
+  // Always offer a way back to the app picker for SSO users
+  const mods = user.value.mods;
+  if (Array.isArray(mods)) return true;
+  return !!user.value.isPlatformAdmin;
+});
+
+const goPortal = () => {
+  window.location.href = PORTAL_URL;
+};
 
 const navItems = computed(() => {
   if (isSuperadmin.value) {
@@ -182,10 +198,23 @@ const isActive = (item) => {
   return route.path.startsWith(item.to);
 };
 
-const handleLogout = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  router.push("/login");
+const handleLogout = async () => {
+  const { getRefreshToken } = await import("@/utils/session");
+  const refreshToken = getRefreshToken();
+  try {
+    if (refreshToken) {
+      await Promise.race([
+        api.logout(refreshToken),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
+    }
+  } catch {
+    /* ignore revoke errors */
+  }
+  const { clearSession } = await import("@/services/api");
+  clearSession();
+  const { redirectToPortalLogin } = await import("@/utils/portal");
+  redirectToPortalLogin({ logout: true });
 };
 
 const go = (item) => {
@@ -239,6 +268,15 @@ const go = (item) => {
             {{ user.email || "" }}
           </div>
         </div>
+        <Button
+          v-if="showPortalLink"
+          variant="ghost"
+          class="mb-1 w-full justify-start text-neutral-600"
+          @click="goPortal"
+        >
+          <LayoutGrid class="h-4 w-4" />
+          {{ t("navPortal") }}
+        </Button>
         <Button
           variant="ghost"
           class="w-full justify-start text-neutral-600"
@@ -300,6 +338,15 @@ const go = (item) => {
             {{ user.email || "" }}
           </div>
         </div>
+        <Button
+          v-if="showPortalLink"
+          variant="ghost"
+          class="mb-1 w-full justify-start text-neutral-600"
+          @click="goPortal"
+        >
+          <LayoutGrid class="h-4 w-4" />
+          {{ t("navPortal") }}
+        </Button>
         <Button
           variant="ghost"
           class="w-full justify-start text-neutral-600"

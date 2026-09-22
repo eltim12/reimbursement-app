@@ -1,27 +1,134 @@
 import axios from "axios";
+import {
+  accessTokenNeedsRefresh,
+  clearSessionTokens,
+  getAccessToken,
+  getRefreshToken,
+  hydrateSessionFromCookies,
+  setSessionTokens,
+} from "@/utils/session";
+
+hydrateSessionFromCookies();
+
+const baseURL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://reimburse-api.trimind.studio/api";
 
 const api = axios.create({
-  baseURL:
-    import.meta.env.VITE_API_BASE_URL ||
-    "https://reimburse-api.trimind.studio/api",
+  baseURL,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
+export function clearSession() {
+  clearSessionTokens();
+  localStorage.removeItem("user");
+}
+
+let refreshPromise = null;
+
+async function refreshSession() {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  const { data } = await axios.post(
+    `${baseURL}/auth/refresh`,
+    { refreshToken },
+    { headers: { "Content-Type": "application/json" } },
+  );
+  const token = data?.token;
+  const nextRefresh = data?.refreshToken;
+  if (!token) return null;
+  setSessionTokens({
+    token,
+    refreshToken: nextRefresh || refreshToken,
+  });
+  return token;
+}
+
+export async function ensureSession() {
+  hydrateSessionFromCookies();
+  const token = getAccessToken();
+  const refreshToken = getRefreshToken();
+  if (!token && !refreshToken) return false;
+  if (token && !accessTokenNeedsRefresh(token)) return true;
+  if (!refreshToken) return !!token;
+  try {
+    if (!refreshPromise) {
+      refreshPromise = refreshSession().finally(() => {
+        refreshPromise = null;
+      });
+    }
+    const next = await refreshPromise;
+    return !!next;
+  } catch {
+    return false;
+  }
+}
+
 // Add token to requests
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
+api.interceptors.response.use(
+  (r) => r,
+  async (err) => {
+    const original = err.config;
+    const status = err.response?.status;
+    const url = String(original?.url || "");
+    const isAuthRoute = /\/auth\/(login|refresh|logout)/.test(url);
+
+    if (status !== 401 || !original || original._retry || isAuthRoute) {
+      return Promise.reject(err);
+    }
+
+    original._retry = true;
+    try {
+      if (!refreshPromise) {
+        refreshPromise = refreshSession().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      const token = await refreshPromise;
+      if (!token) throw new Error("refresh failed");
+      original.headers = original.headers || {};
+      original.headers.Authorization = `Bearer ${token}`;
+      return api(original);
+    } catch {
+      clearSession();
+      if (!location.pathname.startsWith("/sso")) {
+        const { redirectToPortalLogin } = await import("../utils/portal.js");
+        redirectToPortalLogin();
+      }
+      return Promise.reject(err);
+    }
+  },
+);
+
 export default {
   // Auth
   async login(email, password) {
     const response = await api.post("/auth/login", { email, password });
+    return response.data;
+  },
+
+  async exchangeSso(code) {
+    const response = await api.post("/auth/sso/exchange", { code });
+    return response.data;
+  },
+
+  async refresh(refreshToken) {
+    const response = await api.post("/auth/refresh", { refreshToken });
+    return response.data;
+  },
+
+  async logout(refreshToken) {
+    const response = await api.post("/auth/logout", { refreshToken });
     return response.data;
   },
 

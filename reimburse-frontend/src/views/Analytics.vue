@@ -19,8 +19,11 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import CardContent from "@/components/ui/CardContent.vue";
 import Combobox from "@/components/ui/Combobox.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Label from "@/components/ui/Label.vue";
+import Progress from "@/components/ui/Progress.vue";
+import Skeleton from "@/components/ui/Skeleton.vue";
 import Select from "@/components/ui/Select.vue";
 import SelectContent from "@/components/ui/SelectContent.vue";
 import SelectGroup from "@/components/ui/SelectGroup.vue";
@@ -107,9 +110,9 @@ const maxCategoryTotal = computed(() =>
   Math.max(...byCategory.value.map((row) => row.totalAmount), 0),
 );
 
-const barWidth = (amount) => {
-  if (!maxCategoryTotal.value) return "0%";
-  return `${Math.max((amount / maxCategoryTotal.value) * 100, 2)}%`;
+const barPct = (amount) => {
+  if (!maxCategoryTotal.value) return 0;
+  return Math.max((amount / maxCategoryTotal.value) * 100, 2);
 };
 
 const sortedEntries = computed(() => {
@@ -398,20 +401,20 @@ onMounted(async () => {
                   variant="outline"
                   class="h-11"
                   :loading="exportingPdf"
-                  :disabled="!sortedEntries.length"
+                  :disabled="!sortedEntries.length || exportingExcel"
                   @click="handleExportPDF"
                 >
-                  <FileDown class="h-4 w-4" />
+                  <FileDown v-if="!exportingPdf" class="h-4 w-4" />
                   {{ t("exportPDF") }}
                 </Button>
                 <Button
                   variant="outline"
                   class="h-11"
                   :loading="exportingExcel"
-                  :disabled="!sortedEntries.length"
+                  :disabled="!sortedEntries.length || exportingPdf"
                   @click="handleExportExcel"
                 >
-                  <FileSpreadsheet class="h-4 w-4" />
+                  <FileSpreadsheet v-if="!exportingExcel" class="h-4 w-4" />
                   {{ t("exportExcel") }}
                 </Button>
               </div>
@@ -514,8 +517,14 @@ onMounted(async () => {
               </button>
             </div>
           </div>
-          <div v-if="loading" class="py-8 text-center text-sm text-neutral-500">
-            Loading…
+          <div v-if="loading" class="space-y-3 py-2">
+            <div v-for="i in 5" :key="i" class="space-y-1.5">
+              <div class="flex justify-between gap-3">
+                <Skeleton class="h-4 w-1/3" />
+                <Skeleton class="h-4 w-16" />
+              </div>
+              <Progress indeterminate />
+            </div>
           </div>
           <div
             v-else-if="byCategory.length === 0"
@@ -545,12 +554,10 @@ onMounted(async () => {
                   >
                 </div>
               </div>
-              <div class="h-2 overflow-hidden rounded-full bg-neutral-100">
-                <div
-                  class="h-full rounded-full bg-neutral-900 transition-all"
-                  :style="{ width: barWidth(row.totalAmount) }"
-                />
-              </div>
+              <Progress
+                :value="barPct(row.totalAmount)"
+                :aria-label="getCategoryLabel(row.category)"
+              />
             </div>
           </div>
         </CardContent>
@@ -614,11 +621,12 @@ onMounted(async () => {
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td
-                    :colspan="canFilterOwners ? 6 : 5"
-                    class="px-4 py-8 text-center text-neutral-500"
-                  >
-                    Loading…
+                  <td :colspan="canFilterOwners ? 6 : 5" class="p-0">
+                    <DataSkeleton
+                      variant="table"
+                      :rows="6"
+                      :cols="canFilterOwners ? 6 : 5"
+                    />
                   </td>
                 </tr>
                 <tr v-else-if="sortedEntries.length === 0">

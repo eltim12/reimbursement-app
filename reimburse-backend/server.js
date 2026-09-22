@@ -92,6 +92,7 @@ async function resolveFinanceUserFromPlatform(decoded) {
   const company = await resolveLocalCompanyId(decoded);
   const companyId = company?.id ?? null;
   const financeRole = decoded.roles?.finance || "user";
+  const displayName = decoded.name || decoded.email || "User";
 
   let users = [];
   if (decoded.sub) {
@@ -121,12 +122,63 @@ async function resolveFinanceUserFromPlatform(decoded) {
     }
   }
 
+  // Auto-provision local finance row for platform SSO (same idea as HR).
   if (!users.length) {
-    const err = new Error(
-      "No finance account linked. Ask an admin to create your finance user.",
+    if (!decoded.email) {
+      const err = new Error(
+        "No finance account linked. Ask an admin to create your finance user.",
+      );
+      err.status = 403;
+      throw err;
+    }
+    const crypto = require("crypto");
+    const placeholderHash = await bcrypt.hash(
+      crypto.randomBytes(32).toString("hex"),
+      10,
     );
-    err.status = 403;
-    throw err;
+    const [insert] = await db.query(
+      `INSERT INTO users (email, password, name, role, company_id, auth_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        String(decoded.email).toLowerCase().trim(),
+        placeholderHash,
+        displayName,
+        decoded.plat ? "superadmin" : financeRole,
+        decoded.plat ? null : companyId,
+        decoded.sub || null,
+      ],
+    );
+    [users] = await db.query(
+      `SELECT u.id, u.email, u.role, u.company_id, u.purchasing_editor, u.name,
+              c.purchasing_enabled
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id
+       WHERE u.id = ? LIMIT 1`,
+      [insert.insertId],
+    );
+  } else if (!decoded.plat) {
+    // Keep local role/name in sync with platform grants
+    const patch = [];
+    const vals = [];
+    if (financeRole && users[0].role !== financeRole) {
+      patch.push("role = ?");
+      vals.push(financeRole);
+    }
+    if (displayName && users[0].name !== displayName) {
+      patch.push("name = ?");
+      vals.push(displayName);
+    }
+    if (companyId != null && users[0].company_id == null) {
+      patch.push("company_id = ?");
+      vals.push(companyId);
+    }
+    if (patch.length) {
+      vals.push(users[0].id);
+      await db.query(`UPDATE users SET ${patch.join(", ")} WHERE id = ?`, vals);
+      users[0].role = financeRole || users[0].role;
+      users[0].name = displayName || users[0].name;
+      if (companyId != null) users[0].company_id = companyId;
+    }
   }
 
   const u = users[0];
@@ -143,7 +195,7 @@ async function resolveFinanceUserFromPlatform(decoded) {
   return {
     id: u.id,
     email: u.email,
-    name: u.name,
+    name: u.name || displayName,
     role,
     company_id: decoded.plat ? null : companyId ?? u.company_id ?? null,
     purchasing_editor: !!u.purchasing_editor,
@@ -248,9 +300,13 @@ const canViewAllLists = (user) =>
 const listReadOnlyError = (user) =>
   isStakeholder(user)
     ? "Stakeholder users have read-only access"
-    : "Finance users have read-only access";
-/** List/entry write blocked (finance + stakeholder). */
-const isListReadOnly = (user) => isFinance(user) || isStakeholder(user);
+    : "This role has read-only access";
+/**
+ * List/entry write blocked for stakeholder only.
+ * Finance (and user/admin) may create lists and edit their own — same as a normal user.
+ * Management/superadmin may edit lists in company/global scope.
+ */
+const isListReadOnly = (user) => isStakeholder(user);
 
 const canManageCategories = (user) =>
   isSuperadmin(user) ||
@@ -478,6 +534,7 @@ app.post("/api/auth/login", async (req, res) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role, company_id },
       JWT_SECRET,
+      { expiresIn: "12h" },
     );
 
     res.json({
@@ -497,6 +554,145 @@ app.post("/api/auth/login", async (req, res) => {
     console.error("Login error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+/**
+ * Portal SSO handoff: exchange one-time launch code for a finance session.
+ * Body: { code }
+ */
+app.post("/api/auth/sso/exchange", async (req, res) => {
+  try {
+    const code = req.body?.code;
+    if (!code) {
+      return res.status(400).json({ success: false, error: "code is required" });
+    }
+    if (!PLATFORM_API_URL) {
+      return res
+        .status(503)
+        .json({ success: false, error: "Platform SSO unavailable" });
+    }
+    const r = await fetch(`${PLATFORM_API_URL}/api/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const body = await r.json().catch(() => ({}));
+    const data = body.data || body;
+    if (!r.ok || !data.accessToken) {
+      return res.status(401).json({
+        success: false,
+        error: body.error || "Invalid or expired launch code",
+      });
+    }
+    const decoded = jwt.verify(data.accessToken, PLATFORM_JWT_SECRET, {
+      issuer: PLATFORM_JWT_ISSUER,
+    });
+    if (!isPlatformToken(decoded)) {
+      return res.status(401).json({ success: false, error: "Invalid token" });
+    }
+    if (data.module && data.module !== "finance") {
+      return res.status(403).json({
+        success: false,
+        error: "Launch code is not for finance",
+      });
+    }
+    try {
+      const user = await resolveFinanceUserFromPlatform(decoded);
+      return res.json({
+        success: true,
+        token: data.accessToken,
+        refreshToken: data.refreshToken,
+        redirectPath: data.redirectPath || null,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          company_id: user.company_id,
+          purchasing_editor: user.purchasing_editor,
+          purchasing_enabled: user.purchasing_enabled,
+          mods: user.mods,
+        },
+      });
+    } catch (grantErr) {
+      return res.status(grantErr.status || 403).json({
+        success: false,
+        error: grantErr.message || "Finance module not granted",
+      });
+    }
+  } catch (e) {
+    console.error("SSO exchange error:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+/** Proxy platform refresh so the finance SPA can renew SSO access tokens. */
+app.post("/api/auth/refresh", async (req, res) => {
+  const refreshToken = req.body?.refreshToken;
+  if (!refreshToken) {
+    return res
+      .status(400)
+      .json({ success: false, error: "refreshToken is required" });
+  }
+  if (!PLATFORM_API_URL) {
+    return res
+      .status(401)
+      .json({ success: false, error: "Refresh not available" });
+  }
+  try {
+    const r = await fetch(`${PLATFORM_API_URL}/api/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+    const body = await r.json().catch(() => ({}));
+    const data = body.data || body;
+    if (!r.ok || !data.accessToken) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid refresh token" });
+    }
+    const decoded = jwt.verify(data.accessToken, PLATFORM_JWT_SECRET, {
+      issuer: PLATFORM_JWT_ISSUER,
+    });
+    if (!isPlatformToken(decoded)) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid refresh token" });
+    }
+    try {
+      await resolveFinanceUserFromPlatform(decoded);
+    } catch (grantErr) {
+      return res.status(grantErr.status || 403).json({
+        success: false,
+        error: grantErr.message || "Finance module not granted",
+      });
+    }
+    return res.json({
+      success: true,
+      token: data.accessToken,
+      refreshToken: data.refreshToken,
+    });
+  } catch (e) {
+    console.warn("Platform refresh failed:", e.message);
+    return res.status(401).json({ success: false, error: "Refresh failed" });
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  const refreshToken = req.body?.refreshToken;
+  if (PLATFORM_API_URL && refreshToken) {
+    try {
+      await fetch(`${PLATFORM_API_URL}/api/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+    } catch (e) {
+      console.warn("Platform logout failed:", e.message);
+    }
+  }
+  res.json({ success: true });
 });
 
 // Categories — company-scoped (superadmin: optional companyId filter)
@@ -981,249 +1177,29 @@ app.get("/api/admin/users", authenticateToken, requireUsersViewer, async (req, r
 
 // Create user (management: own company; superadmin: any company via company_id)
 app.post("/api/admin/users", authenticateToken, requireManagement, async (req, res) => {
-  try {
-    const { email, password, name, role, purchasing_editor } = req.body;
-    const scope = resolveCompanyFilter(req, { required: true });
-    if (scope.error) {
-      return res.status(400).json({ success: false, error: scope.error });
-    }
-    const companyId = scope.companyId;
-
-    const [companies] = await db.query(
-      "SELECT id FROM companies WHERE id = ?",
-      [companyId],
-    );
-    if (companies.length === 0) {
-      return res.status(400).json({ success: false, error: "Company not found" });
-    }
-
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Email and password are required" });
-    }
-    if (!/.+@.+\..+/.test(email)) {
-      return res.status(400).json({ success: false, error: "Email must be valid" });
-    }
-    if (String(password).length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: "Password must be at least 6 characters",
-      });
-    }
-
-    if (role === "superadmin") {
-      return res.status(403).json({
-        success: false,
-        error: "Cannot create superadmin via this endpoint",
-      });
-    }
-
-    const nextRole = ALLOWED_ROLES.includes(role) ? role : "user";
-    const nextPurchasingEditor = purchasing_editor ? 1 : 0;
-
-    const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
-      email.trim(),
-    ]);
-    if (existing.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const [result] = await db.query(
-      "INSERT INTO users (email, password, name, role, company_id, purchasing_editor) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        email.trim(),
-        hashedPassword,
-        (name || "").trim(),
-        nextRole,
-        companyId,
-        nextPurchasingEditor,
-      ],
-    );
-
-    res.json({
-      success: true,
-      user: {
-        id: result.insertId,
-        email: email.trim(),
-        name: (name || "").trim(),
-        role: nextRole,
-        company_id: companyId,
-        purchasing_editor: !!nextPurchasingEditor,
-      },
-    });
-  } catch (error) {
-    console.error("Error creating user:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+  return res.status(403).json({
+    success: false,
+    error:
+      "User creation moved to the platform console (https://admin.whtb.glass). Create the account there and grant the finance module.",
+  });
 });
 
-// Update user
 app.put("/api/admin/users/:id", authenticateToken, requireManagement, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      email,
-      password,
-      name,
-      role,
-      company_id: bodyCompanyId,
-      purchasing_editor,
-    } = req.body;
-
-    let users;
-    if (isSuperadmin(req.user)) {
-      [users] = await db.query(
-        "SELECT id, role, company_id, purchasing_editor FROM users WHERE id = ? AND role <> 'superadmin'",
-        [id],
-      );
-    } else {
-      [users] = await db.query(
-        "SELECT id, role, company_id, purchasing_editor FROM users WHERE id = ? AND company_id = ?",
-        [id, req.user.company_id],
-      );
-    }
-    if (users.length === 0) {
-      return res.status(404).json({ success: false, error: "User not found" });
-    }
-
-    if (!email || !String(email).trim()) {
-      return res.status(400).json({ success: false, error: "Email is required" });
-    }
-    if (!/.+@.+\..+/.test(email)) {
-      return res.status(400).json({ success: false, error: "Email must be valid" });
-    }
-    if (!name || !String(name).trim()) {
-      return res.status(400).json({ success: false, error: "Name is required" });
-    }
-
-    if (role === "superadmin") {
-      return res.status(403).json({
-        success: false,
-        error: "Cannot assign superadmin role",
-      });
-    }
-
-    const nextRole = ALLOWED_ROLES.includes(role) ? role : users[0].role || "user";
-    let companyId = users[0].company_id;
-    if (isSuperadmin(req.user) && bodyCompanyId != null && bodyCompanyId !== "") {
-      companyId = Number(bodyCompanyId);
-      const [companies] = await db.query(
-        "SELECT id FROM companies WHERE id = ?",
-        [companyId],
-      );
-      if (companies.length === 0) {
-        return res.status(400).json({ success: false, error: "Company not found" });
-      }
-    }
-
-    const nextPurchasingEditor =
-      purchasing_editor === undefined
-        ? users[0].purchasing_editor
-          ? 1
-          : 0
-        : purchasing_editor
-          ? 1
-          : 0;
-
-    const [existing] = await db.query(
-      "SELECT id FROM users WHERE email = ? AND id != ?",
-      [email.trim(), id],
-    );
-    if (existing.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Email already registered" });
-    }
-
-    if (password) {
-      if (String(password).length < 6) {
-        return res.status(400).json({
-          success: false,
-          error: "Password must be at least 6 characters",
-        });
-      }
-      const hashedPassword = await bcrypt.hash(password, 10);
-      await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ?, password = ?, company_id = ?, purchasing_editor = ? WHERE id = ?",
-        [
-          email.trim(),
-          name.trim(),
-          nextRole,
-          hashedPassword,
-          companyId,
-          nextPurchasingEditor,
-          id,
-        ],
-      );
-    } else {
-      await db.query(
-        "UPDATE users SET email = ?, name = ?, role = ?, company_id = ?, purchasing_editor = ? WHERE id = ?",
-        [
-          email.trim(),
-          name.trim(),
-          nextRole,
-          companyId,
-          nextPurchasingEditor,
-          id,
-        ],
-      );
-    }
-
-    res.json({
-      success: true,
-      user: {
-        id: Number(id),
-        email: email.trim(),
-        name: name.trim(),
-        role: nextRole,
-        company_id: companyId,
-        purchasing_editor: !!nextPurchasingEditor,
-      },
-    });
-  } catch (error) {
-    console.error("Error updating user:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+  return res.status(403).json({
+    success: false,
+    error:
+      "User edits moved to the platform console (https://admin.whtb.glass). Update module roles there.",
+  });
 });
 
-// Delete user
 app.delete("/api/admin/users/:id", authenticateToken, requireManagement, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (Number(id) === Number(req.user.id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Cannot delete your own account" });
-    }
-
-    let users;
-    if (isSuperadmin(req.user)) {
-      [users] = await db.query(
-        "SELECT id FROM users WHERE id = ? AND role <> 'superadmin'",
-        [id],
-      );
-    } else {
-      [users] = await db.query(
-        "SELECT id FROM users WHERE id = ? AND company_id = ?",
-        [id, req.user.company_id],
-      );
-    }
-    if (users.length === 0) {
-      return res.status(404).json({ success: false, error: "User not found" });
-    }
-
-    await db.query("DELETE FROM users WHERE id = ?", [id]);
-    res.json({ success: true, message: "User deleted successfully" });
-  } catch (error) {
-    console.error("Error deleting user:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+  return res.status(403).json({
+    success: false,
+    error:
+      "User deletion moved to the platform console (https://admin.whtb.glass). Deactivate the membership there.",
+  });
 });
+
 
 // Get current user profile (Protected)
 app.get("/api/users/me", authenticateToken, async (req, res) => {
@@ -1242,8 +1218,10 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
     }
 
     const user = users[0];
-    const role =
-      req.user.role === "superadmin"
+    // Prefer platform-resolved role from JWT (SSO) over stale local DB role
+    const role = req.user.platform
+      ? req.user.role || user.role || "user"
+      : req.user.role === "superadmin"
         ? "superadmin"
         : user.role || "user";
     res.json({
@@ -1253,12 +1231,18 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
         email: user.email,
         name: user.name || "",
         role,
-        company_id: user.company_id ?? null,
+        company_id:
+          req.user.platform && req.user.company_id != null
+            ? req.user.company_id
+            : (user.company_id ?? null),
         purchasing_editor: !!user.purchasing_editor,
         purchasing_enabled:
           role === "superadmin"
             ? true
-            : !!user.purchasing_enabled || !!req.user.purchasing_enabled,
+            : !!(
+                user.purchasing_enabled ||
+                req.user.purchasing_enabled
+              ),
         mods: req.user.mods || ["finance"],
         createdAt: user.created_at,
       },
@@ -1550,15 +1534,11 @@ app.get("/api/lists/:id", authenticateToken, requireCompanyUser, async (req, res
   }
 });
 
-// Create a new list (Protected)
+// Create a new list (Protected) — user/admin/management/finance (own list)
 app.post("/api/lists", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
-    if (
-      isManagement(req.user) ||
-      isFinance(req.user) ||
-      isStakeholder(req.user) ||
-      isSuperadmin(req.user)
-    ) {
+    // Stakeholder = view-only; superadmin uses company tools, not personal lists
+    if (isStakeholder(req.user) || isSuperadmin(req.user)) {
       return res.status(403).json({
         success: false,
         error: "This role cannot create lists",

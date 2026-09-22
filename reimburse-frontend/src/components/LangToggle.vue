@@ -7,16 +7,19 @@ const { locale, setLocale } = useI18n();
 
 <template>
   <div
-    class="inline-flex h-7 items-center rounded-md border border-neutral-200 bg-neutral-50 p-0.5"
+    role="group"
+    aria-label="Language"
+    class="inline-flex h-9 shrink-0 items-center rounded-lg border border-neutral-200 bg-neutral-100/80 p-0.5"
   >
     <button
       type="button"
+      :aria-pressed="locale === 'en'"
       :class="
         cn(
-          'rounded px-2 text-xs font-medium transition-colors',
+          'inline-flex h-8 min-w-[2.75rem] items-center justify-center rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors',
           locale === 'en'
             ? 'bg-white text-neutral-900 shadow-sm'
-            : 'text-neutral-500 hover:text-neutral-900',
+            : 'text-neutral-500 hover:text-neutral-800',
         )
       "
       @click="setLocale('en')"
@@ -25,12 +28,13 @@ const { locale, setLocale } = useI18n();
     </button>
     <button
       type="button"
+      :aria-pressed="locale === 'zh'"
       :class="
         cn(
-          'rounded px-2 text-xs font-medium transition-colors',
+          'inline-flex h-8 min-w-[2.75rem] items-center justify-center rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors',
           locale === 'zh'
             ? 'bg-white text-neutral-900 shadow-sm'
-            : 'text-neutral-500 hover:text-neutral-900',
+            : 'text-neutral-500 hover:text-neutral-800',
         )
       "
       @click="setLocale('zh')"

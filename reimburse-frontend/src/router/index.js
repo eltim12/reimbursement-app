@@ -8,6 +8,7 @@ import Analytics from "../views/Analytics.vue";
 import Companies from "../views/Companies.vue";
 import Purchasing from "../views/Purchasing.vue";
 import Login from "../views/Login.vue";
+import Sso from "../views/Sso.vue";
 
 const routes = [
   {
@@ -62,11 +63,19 @@ const routes = [
     path: "/login",
     name: "Login",
     component: Login,
-    meta: { guestOnly: true },
+    meta: { public: true },
+  },
+  {
+    path: "/sso",
+    name: "Sso",
+    component: Sso,
+    meta: { public: true },
   },
   {
     path: "/register",
-    redirect: "/login",
+    name: "Register",
+    component: () => import("../views/Register.vue"),
+    meta: { public: true },
   },
 ];
 
@@ -75,8 +84,40 @@ const router = createRouter({
   routes,
 });
 
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem("token");
+async function sendToPortal() {
+  const { redirectToPortalLogin } = await import("../utils/portal.js");
+  redirectToPortalLogin();
+}
+
+router.beforeEach(async (to, from, next) => {
+  if (to.meta.public) {
+    next();
+    return;
+  }
+
+  const { ensureSession, clearSession } = await import("../services/api.js");
+  const {
+    getAccessToken,
+    getRefreshToken,
+    hydrateSessionFromCookies,
+  } = await import("../utils/session.js");
+
+  hydrateSessionFromCookies();
+  const hasSession = !!(getAccessToken() || getRefreshToken());
+
+  if (to.meta.requiresAuth) {
+    if (hasSession) {
+      const ok = await ensureSession();
+      if (!ok) {
+        clearSession();
+        await sendToPortal();
+        next(false);
+        return;
+      }
+    }
+  }
+
+  const token = getAccessToken();
   const isAuthenticated = !!token;
   let user = {};
   try {
@@ -94,12 +135,8 @@ router.beforeEach((to, from, next) => {
   const canAccessPurchasing = isSuperadmin || !!user.purchasing_enabled;
 
   if (to.meta.requiresAuth && !isAuthenticated) {
-    next("/login");
-    return;
-  }
-
-  if (to.meta.guestOnly && isAuthenticated) {
-    next(isSuperadmin ? "/superadmin/companies" : "/");
+    await sendToPortal();
+    next(false);
     return;
   }
 

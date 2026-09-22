@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import CardContent from "@/components/ui/CardContent.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Field from "@/components/ui/Field.vue";
 import FieldDescription from "@/components/ui/FieldDescription.vue";
@@ -310,11 +311,12 @@ onMounted(async () => {
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td
-                    :colspan="isSuperadmin ? 5 : 4"
-                    class="px-4 py-8 text-center text-neutral-500"
-                  >
-                    Loading…
+                  <td :colspan="isSuperadmin ? 5 : 4" class="p-0">
+                    <DataSkeleton
+                      variant="table"
+                      :rows="6"
+                      :cols="isSuperadmin ? 5 : 4"
+                    />
                   </td>
                 </tr>
                 <tr v-else-if="filteredCategories.length === 0">

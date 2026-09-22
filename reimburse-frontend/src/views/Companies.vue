@@ -9,6 +9,7 @@ import CardContent from "@/components/ui/CardContent.vue";
 import CardHeader from "@/components/ui/CardHeader.vue";
 import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
@@ -254,9 +255,7 @@ onMounted(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <div v-if="loading" class="py-8 text-center text-sm text-neutral-500">
-            ...
-          </div>
+          <DataSkeleton v-if="loading" variant="cards" :rows="4" />
           <div
             v-else-if="filteredCompanies.length === 0"
             class="py-8 text-center text-sm text-neutral-500"

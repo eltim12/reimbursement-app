@@ -14,6 +14,14 @@ function detectHasLatin(text) {
   return /[A-Za-z]/.test(text);
 }
 
+/** Line is mostly Chinese characters (used to pick ID vs ZH from bilingual stacks). */
+function isPrimarilyChinese(text) {
+  const chars = String(text || "").replace(/\s/g, "");
+  if (!chars) return false;
+  const chinese = (chars.match(/[\u4e00-\u9fa5]/g) || []).length;
+  return chinese / chars.length >= 0.4;
+}
+
 function cacheKey(text, sourceLang, targetLang) {
   return `${sourceLang}|${targetLang}|${text}`;
 }
@@ -77,27 +85,37 @@ export function formatBilingualExportStack(text) {
   return null;
 }
 
-/** Pick one language from bilingual text for locale-aware exports. */
+/** Pick one language from bilingual text for locale-aware UI / exports. */
 export function pickLocaleFromBilingual(text, locale = "en") {
   const slashParts = splitBilingualSlash(text);
   if (slashParts) {
     return locale === "zh" ? slashParts.zh : slashParts.id;
   }
 
-  if (isAlreadyBilingual(text)) {
-    const lines = String(text)
-      .trim()
-      .split(/\n+/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (lines.length >= 2) {
-      const chineseLine = lines.find((line) => detectIsChinese(line));
-      const latinLine = lines.find(
-        (line) => detectHasLatin(line) && !detectIsChinese(line),
-      );
-      if (locale === "zh" && chineseLine) return chineseLine;
-      if (locale !== "zh" && latinLine) return latinLine;
+  const lines = String(text || "")
+    .trim()
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length >= 2) {
+    const chineseLine =
+      lines.find((line) => isPrimarilyChinese(line)) ||
+      lines.find((line) => detectIsChinese(line));
+    const latinLine =
+      lines.find((line) => !isPrimarilyChinese(line)) ||
+      lines.find((line) => detectHasLatin(line) && !detectIsChinese(line));
+
+    if (locale === "zh") {
+      return chineseLine || lines[0];
     }
+    // ID / non-zh: prefer Indonesian (non-Chinese) line.
+    // Stored bilingual order from translateBilingualZhId is 中文 then Indonesia.
+    return latinLine || lines[lines.length - 1];
+  }
+
+  if (lines.length === 1) {
+    return lines[0];
   }
 
   return null;

@@ -28,7 +28,9 @@ module.exports = function registerPurchasingRoutes({
     if (isStakeholder(user)) return false;
     if (isSuperadmin(user)) return true;
     if (!user?.company_id) return false;
-    if (isFinance(user) || isManagement(user)) return true;
+    if (isFinance(user) || isManagement(user) || user?.role === "admin") {
+      return true;
+    }
     return !!user.purchasing_editor;
   };
 

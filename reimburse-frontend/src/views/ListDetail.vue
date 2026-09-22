@@ -8,6 +8,7 @@ import ReceiptScanOverlay from "@/components/ReceiptScanOverlay.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Field from "@/components/ui/Field.vue";
@@ -51,9 +52,15 @@ const currentUser = computed(() => {
     return {};
   }
 });
-const isReadOnly = computed(() =>
-  ["finance", "stakeholder"].includes(currentUser.value.role),
-);
+const listOwnerId = ref(null);
+/** Stakeholder: always read-only. Management/superadmin: edit any in scope. Others (incl. finance): edit own lists only. */
+const isReadOnly = computed(() => {
+  const role = currentUser.value.role;
+  if (role === "stakeholder") return true;
+  if (role === "management" || role === "superadmin") return false;
+  if (listOwnerId.value == null) return false;
+  return Number(listOwnerId.value) !== Number(currentUser.value.id);
+});
 
 const currencyItems = computed(() => [
   { label: "IDR", value: "IDR" },
@@ -319,6 +326,7 @@ const loadList = async (id) => {
       const list = response.list;
       currentListId.value = list.id;
       currentListName.value = list.name;
+      listOwnerId.value = list.userId ?? null;
       listOwnerName.value = list.ownerName || "";
       listOwnerEmail.value = list.ownerEmail || "";
       entries.value = (list.entries || []).sort(
@@ -696,18 +704,20 @@ onMounted(async () => {
               variant="outline"
               class="h-10 w-full"
               :loading="exporting"
+              :disabled="exportingExcel"
               @click="handleExportPDF"
             >
-              <FileDown class="h-4 w-4" />
+              <FileDown v-if="!exporting" class="h-4 w-4" />
               {{ t("exportPDF") }}
             </Button>
             <Button
               variant="outline"
               class="h-10 w-full"
               :loading="exportingExcel"
+              :disabled="exporting"
               @click="handleExportExcel"
             >
-              <FileSpreadsheet class="h-4 w-4" />
+              <FileSpreadsheet v-if="!exportingExcel" class="h-4 w-4" />
               {{ t("exportExcel") }}
             </Button>
           </div>
@@ -740,7 +750,79 @@ onMounted(async () => {
           </div>
         </div>
 
-        <Card class="w-full overflow-hidden p-0">
+        <div class="space-y-3 md:hidden">
+          <DataSkeleton v-if="loading" variant="cards" :rows="5" />
+          <div
+            v-else-if="entries.length === 0"
+            class="rounded-xl border border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500"
+          >
+            {{ t("noEntries") }}
+          </div>
+          <template v-else>
+            <div
+              v-for="(entry, idx) in entries"
+              :key="entry.id || idx"
+              class="rounded-xl border border-neutral-200 bg-white p-4"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1 space-y-1">
+                  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span class="font-mono text-xs text-neutral-400"
+                      >#{{ idx + 1 }}</span
+                    >
+                    <span class="font-medium text-neutral-900">{{
+                      getCategoryLabel(entry.Category)
+                    }}</span>
+                  </div>
+                  <p class="font-mono text-base font-semibold text-neutral-900">
+                    {{ formatCurrency(entry.Amount, entry.Currency || "IDR") }}
+                  </p>
+                  <p class="text-sm text-neutral-600">
+                    {{ entry.Note || "—" }}
+                  </p>
+                  <p class="font-mono text-xs text-neutral-500">
+                    {{ entry.Date }}
+                  </p>
+                </div>
+                <button
+                  v-if="getProofUrl(entry.Proof)"
+                  type="button"
+                  class="shrink-0"
+                  @click="openProofPreview(entry.Proof)"
+                >
+                  <img
+                    :src="getProofUrl(entry.Proof)"
+                    :alt="t('tableProof')"
+                    class="size-16 rounded-lg border border-neutral-200 object-cover"
+                  />
+                </button>
+              </div>
+              <div
+                v-if="!isReadOnly"
+                class="mt-3 flex items-center justify-end gap-1 border-t border-neutral-100 pt-2"
+              >
+                <Button
+                  v-if="entry.id"
+                  variant="ghost"
+                  size="icon-sm"
+                  @click="openEditEntry(entry)"
+                >
+                  <Pencil class="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  @click="requestDeleteEntry(idx)"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <Card class="hidden w-full overflow-hidden p-0 md:block">
           <div class="w-full overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -773,11 +855,8 @@ onMounted(async () => {
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td
-                    :colspan="isReadOnly ? 6 : 7"
-                    class="px-4 py-8 text-center text-neutral-500"
-                  >
-                    Loading…
+                  <td :colspan="isReadOnly ? 6 : 7" class="p-0">
+                    <DataSkeleton variant="table" :rows="6" :cols="isReadOnly ? 6 : 7" />
                   </td>
                 </tr>
                 <tr v-else-if="entries.length === 0">
@@ -985,7 +1064,6 @@ onMounted(async () => {
               <UploadImage
                 v-model="entryForm.proof"
                 :multiple="false"
-                :max-size="5 * 1024 * 1024"
                 :hint="t('selectImage')"
                 accept="image/*"
                 :show-existing="!!existingProofUrl && !entryForm.proof"

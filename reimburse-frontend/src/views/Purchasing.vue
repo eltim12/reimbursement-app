@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  ChevronRight,
   Eye,
   ListFilter,
   Pencil,
@@ -20,6 +21,7 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import Combobox from "@/components/ui/Combobox.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Input from "@/components/ui/Input.vue";
@@ -35,8 +37,11 @@ import { useI18n } from "@/composables/useI18n";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import {
+  isAlreadyBilingual,
   pickLocaleFromBilingual,
+  splitBilingualSlash,
   translateBilingualZhId,
+  translateToLocale,
 } from "@/utils/translator";
 import { getUnitLabel, purchasingUnitItems } from "@/utils/units";
 import { cn } from "@/lib/utils";
@@ -61,7 +66,13 @@ const canFullEdit = computed(() => {
   const u = currentUser.value;
   if (u.role === "stakeholder") return false;
   if (u.role === "superadmin") return true;
-  if (u.role === "finance" || u.role === "management") return true;
+  if (
+    u.role === "finance" ||
+    u.role === "management" ||
+    u.role === "admin"
+  ) {
+    return true;
+  }
   return !!u.purchasing_editor;
 });
 const canCreatePurchasing = computed(() => !isStakeholder.value);
@@ -244,7 +255,62 @@ const displayLocalized = (text) => {
   if (!text || !String(text).trim()) return "";
   const picked = pickLocaleFromBilingual(text, locale.value);
   if (picked) return picked;
-  return String(text).trim().split(/\n+/)[0] || String(text);
+  // Last resort: for ID UI never prefer the first line if it looks Chinese.
+  const lines = String(text)
+    .trim()
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (locale.value !== "zh" && lines.length >= 2) {
+    return lines[lines.length - 1];
+  }
+  return lines[0] || String(text);
+};
+
+/** Cached locale-aware catatan PO labels (handles Chinese-only legacy notes). */
+const noteLabelByKey = ref({});
+
+const orderNoteLabel = (row) => {
+  if (!row?.note) return "—";
+  const key = `${row.id}:${locale.value}`;
+  const cached = noteLabelByKey.value[key];
+  if (cached != null && cached !== "") return cached;
+  if (cached === "") return "—";
+  return displayLocalized(row.note) || "—";
+};
+
+const hydrateOrderNoteLabels = async (rows) => {
+  const loc = locale.value;
+  const next = { ...noteLabelByKey.value };
+  await Promise.all(
+    (rows || []).map(async (row) => {
+      const key = `${row.id}:${loc}`;
+      const note = String(row.note || "").trim();
+      if (!note) {
+        next[key] = "";
+        return;
+      }
+      if (isAlreadyBilingual(note) || splitBilingualSlash(note)) {
+        next[key] = displayLocalized(note);
+        return;
+      }
+      try {
+        next[key] = await translateToLocale(note, loc);
+        // Persist bilingual so future list loads don't need network translate.
+        const bilingual = await translateBilingualZhId(note);
+        if (bilingual && bilingual !== note) {
+          row.note = bilingual;
+          next[key] = displayLocalized(bilingual);
+          if (canEditRow(row)) {
+            api.updatePurchasing(row.id, { note: bilingual }).catch(() => {});
+          }
+        }
+      } catch {
+        next[key] = displayLocalized(note);
+      }
+    }),
+  );
+  noteLabelByKey.value = next;
 };
 
 const itemCountLabel = (n) => t("itemCount").replace("{n}", String(n ?? 0));
@@ -296,7 +362,7 @@ const detailReceivedNote = ref("");
 const detailReceivedProofFile = ref(null);
 const detailExistingReceivedProof = ref([]);
 const detailItemStatuses = ref([]);
-const statusEditMode = ref(false);
+const showStatusModal = ref(false);
 
 const canEditRow = (row) => {
   if (isStakeholder.value) return false;
@@ -403,6 +469,7 @@ const load = async () => {
     const response = await api.getPurchasing(params);
     if (response.success) {
       orders.value = response.orders || response.requests || [];
+      hydrateOrderNoteLabels(orders.value);
     }
   } catch (error) {
     showToast(
@@ -526,7 +593,7 @@ const openDetail = (row) => {
     ? [{ url: getImageUrl(row.received_proof_image) }]
     : [];
   initDetailItemStatuses(row);
-  statusEditMode.value = canFullEdit.value && row.status !== "received";
+  showStatusModal.value = false;
   showDetailModal.value = true;
 };
 
@@ -544,25 +611,20 @@ const startStatusEdit = () => {
     ? [{ url: getImageUrl(detailItem.value.received_proof_image) }]
     : [];
   initDetailItemStatuses(detailItem.value);
-  statusEditMode.value = true;
+  // Swap: never stack status on top of detail
+  showDetailModal.value = false;
+  showStatusModal.value = true;
 };
 
-const cancelStatusEdit = () => {
-  if (!detailItem.value) return;
-  detailStatus.value =
-    detailItem.value.status === "partial"
-      ? "ordered"
-      : detailItem.value.status;
-  detailStatusScope.value =
-    detailItem.value.status === "partial" ? "items" : "order";
-  detailReceivedNote.value = detailItem.value.received_note || "";
-  detailReceivedProofFile.value = null;
-  detailExistingReceivedProof.value = detailItem.value.received_proof_image
-    ? [{ url: getImageUrl(detailItem.value.received_proof_image) }]
-    : [];
-  initDetailItemStatuses(detailItem.value);
-  statusEditMode.value =
-    canFullEdit.value && detailItem.value.status !== "received";
+const backFromStatusEdit = () => {
+  showStatusModal.value = false;
+  if (detailItem.value) showDetailModal.value = true;
+};
+
+const onStatusModalOpen = (open) => {
+  showStatusModal.value = open;
+  // Backdrop / Esc close → return to detail (one modal at a time)
+  if (!open && detailItem.value) showDetailModal.value = true;
 };
 
 const saveDetailStatus = async () => {
@@ -650,7 +712,8 @@ const saveDetailStatus = async () => {
         ? [{ url: getImageUrl(detailItem.value.received_proof_image) }]
         : [];
       initDetailItemStatuses(detailItem.value);
-      statusEditMode.value = detailItem.value.status !== "received";
+      showStatusModal.value = false;
+      showDetailModal.value = true;
       showToast(t("purchasingUpdated"), "success");
       await load();
     }
@@ -708,6 +771,11 @@ const save = async () => {
     saving.value = true;
     translating.value = true;
 
+    let orderNote = String(form.value.note || "").trim();
+    if (orderNote) {
+      orderNote = await translateBilingualZhId(orderNote);
+    }
+
     const payloadItems = [];
     for (const item of items) {
       let item_name = String(item.item_name || "").trim();
@@ -743,7 +811,7 @@ const save = async () => {
 
     const payload = {
       urgency: form.value.urgency,
-      note: String(form.value.note || "").trim(),
+      note: orderNote,
       items: payloadItems,
       requestor_id: form.value.requestor_id
         ? Number(form.value.requestor_id)
@@ -809,6 +877,10 @@ watch(
   },
 );
 
+watch(locale, () => {
+  hydrateOrderNoteLabels(orders.value);
+});
+
 watch(companyFilter, async () => {
   if (isSuperadmin.value) {
     await loadColleagues();
@@ -873,7 +945,99 @@ onMounted(async () => {
           </Button>
         </div>
 
-        <div class="overflow-x-auto">
+        <!-- Mobile: card list -->
+        <div class="space-y-3 p-3 md:hidden">
+          <DataSkeleton v-if="loading" variant="cards" :rows="5" />
+          <div
+            v-else-if="sortedRows.length === 0"
+            class="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-10 text-center text-sm text-neutral-500"
+          >
+            <ShoppingCart class="mx-auto mb-2 h-8 w-8 text-neutral-300" />
+            {{ t("noPurchasing") }}
+          </div>
+          <template v-else>
+            <div
+              v-for="row in sortedRows"
+              :key="row.id"
+              class="flex w-full flex-col gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-colors active:bg-neutral-50"
+              role="button"
+              tabindex="0"
+              @click="openDetail(row)"
+              @keydown.enter.prevent="openDetail(row)"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="font-mono text-sm font-semibold text-neutral-900">
+                    {{ row.po_code }}
+                  </p>
+                  <p class="mt-0.5 line-clamp-2 text-sm text-neutral-600">
+                    {{ orderNoteLabel(row) }}
+                  </p>
+                </div>
+                <ChevronRight class="mt-0.5 h-4 w-4 shrink-0 text-neutral-400" />
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <Badge :class="statusBadgeClass(row.status)">
+                  {{ labelStatus(row.status) }}
+                </Badge>
+                <Badge :class="urgencyBadgeClass(row.urgency)">
+                  {{ labelUrgency(row.urgency) }}
+                </Badge>
+              </div>
+              <div class="space-y-1 text-sm">
+                <div>
+                  <span class="font-medium text-neutral-900">{{
+                    row.requestor_name || "—"
+                  }}</span>
+                  <span
+                    v-if="row.requestor_email"
+                    class="mt-0.5 block truncate text-xs text-neutral-500"
+                  >
+                    {{ row.requestor_email }}
+                  </span>
+                </div>
+                <div>
+                  <p class="text-xs text-neutral-500">
+                    {{
+                      itemCountLabel(row.item_count || row.items?.length || 0)
+                    }}
+                  </p>
+                  <p class="line-clamp-2 whitespace-pre-line text-neutral-800">
+                    {{ itemsPreview(row) }}
+                  </p>
+                </div>
+                <p class="font-mono text-xs text-neutral-500">
+                  {{ row.request_date || "—" }}
+                </p>
+              </div>
+              <div
+                v-if="canEditRow(row)"
+                class="flex items-center justify-end gap-1 border-t border-neutral-100 pt-2"
+                @click.stop
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-9 w-9"
+                  @click="openEdit(row)"
+                >
+                  <Pencil class="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-9 w-9 text-red-600 hover:text-red-700"
+                  @click="askDelete(row)"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Desktop: table -->
+        <div class="hidden overflow-x-auto md:block">
           <table class="w-full min-w-[56rem] text-left text-sm">
             <thead class="border-b border-neutral-100 bg-neutral-50/80 text-xs uppercase tracking-wide">
               <tr>
@@ -952,8 +1116,8 @@ onMounted(async () => {
             </thead>
             <tbody>
               <tr v-if="loading">
-                <td colspan="8" class="px-4 py-12 text-center text-neutral-500">
-                  …
+                <td colspan="8" class="p-0">
+                  <DataSkeleton variant="table" :rows="6" :cols="8" />
                 </td>
               </tr>
               <tr v-else-if="sortedRows.length === 0">
@@ -973,7 +1137,7 @@ onMounted(async () => {
                 </td>
                 <td class="max-w-[14rem] px-4 py-3">
                   <div class="line-clamp-2 text-neutral-800">
-                    {{ row.note || "—" }}
+                    {{ orderNoteLabel(row) }}
                   </div>
                 </td>
                 <td class="px-4 py-3">
@@ -1187,6 +1351,7 @@ onMounted(async () => {
             :placeholder="t('poNotePlaceholder')"
           />
           <p class="text-xs text-neutral-500">{{ t("poNoteHint") }}</p>
+          <p class="text-xs text-neutral-500">{{ t("bilingualAutoHint") }}</p>
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2">
@@ -1368,7 +1533,7 @@ onMounted(async () => {
       :open="showDetailModal"
       :title="detailItem?.po_code || t('purchasingDetail')"
       class="max-w-3xl"
-      actions-class="grid w-full grid-cols-2 gap-2"
+      actions-class="flex w-full flex-col gap-2 sm:flex-row sm:justify-end"
       @update:open="(v) => (showDetailModal = v)"
     >
       <div v-if="detailItem" class="space-y-5">
@@ -1389,7 +1554,9 @@ onMounted(async () => {
           class="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3"
         >
           <div class="text-xs text-neutral-500">{{ t("poNote") }}</div>
-          <div class="font-medium text-neutral-900">{{ detailItem.note }}</div>
+          <div class="font-medium text-neutral-900 whitespace-pre-line">
+            {{ displayLocalized(detailItem.note) || detailItem.note }}
+          </div>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
@@ -1486,208 +1653,229 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="canManageStatus" class="space-y-3 rounded-xl border border-neutral-200 p-4">
-          <div class="flex items-center justify-between">
-            <div class="text-sm font-medium">{{ t("purchasingStatus") }}</div>
-            <Button
-              v-if="!statusEditMode && detailItem.status !== 'received'"
-              variant="outline"
-              class="h-8"
-              @click="startStatusEdit"
-            >
-              {{ t("editStatus") }}
-            </Button>
+        <div
+          v-if="
+            detailItem.status === 'received' &&
+            (detailItem.received_note ||
+              getImageUrl(detailItem.received_proof_image))
+          "
+          class="space-y-2 rounded-xl border border-neutral-200 p-4"
+        >
+          <div class="text-sm font-medium text-neutral-900">
+            {{ t("receivedNote") }}
           </div>
-
-          <template v-if="statusEditMode">
-            <p class="text-xs text-neutral-500">{{ t("statusScopeHint") }}</p>
-            <div class="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                :variant="detailStatusScope === 'order' ? 'default' : 'outline'"
-                class="h-10"
-                @click="detailStatusScope = 'order'"
-              >
-                {{ t("statusScopeOrder") }}
-              </Button>
-              <Button
-                type="button"
-                :variant="detailStatusScope === 'items' ? 'default' : 'outline'"
-                class="h-10"
-                @click="detailStatusScope = 'items'"
-              >
-                {{ t("statusScopeItems") }}
-              </Button>
-            </div>
-
-            <template v-if="detailStatusScope === 'order'">
-              <Select
-                :model-value="detailStatus"
-                :items="itemStatusItems"
-                @update:model-value="(v) => (detailStatus = v)"
-              >
-                <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem
-                      v-for="item in itemStatusItems"
-                      :key="item.value"
-                      :value="item.value"
-                    >
-                      {{ item.label }}
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-
-              <div v-if="detailStatus === 'received'" class="space-y-3">
-                <div class="space-y-2">
-                  <Label>{{ t("receivedNote") }}</Label>
-                  <Input v-model="detailReceivedNote" class="h-11" />
-                </div>
-                <div class="space-y-2">
-                  <Label>{{ t("receivedProof") }}</Label>
-                  <UploadImage
-                    v-model="detailReceivedProofFile"
-                    :existing-images="detailExistingReceivedProof"
-                    @existing-removed="detailExistingReceivedProof = []"
-                  />
-                </div>
-              </div>
-            </template>
-
-            <template v-else>
-              <div class="flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="h-9"
-                  @click="applyDetailStatusToAllItems"
-                >
-                  {{ t("applyStatusToAll") }}
-                </Button>
-              </div>
-              <div
-                v-for="row in detailItemStatuses"
-                :key="row.id"
-                class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3"
-              >
-                <div class="line-clamp-2 text-sm font-medium">
-                  {{ displayLocalized(row.item_name) }}
-                </div>
-                <div class="grid gap-3 sm:grid-cols-2">
-                  <div class="space-y-2">
-                    <Label>{{ t("purchasingStatus") }}</Label>
-                    <Select
-                      :model-value="row.status"
-                      :items="itemStatusItems"
-                      @update:model-value="(v) => (row.status = v)"
-                    >
-                      <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem
-                            v-for="opt in itemStatusItems"
-                            :key="opt.value"
-                            :value="opt.value"
-                          >
-                            {{ opt.label }}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="space-y-2">
-                    <Label>{{ t("supplier") }}</Label>
-                    <Input v-model="row.supplier" class="h-11" />
-                  </div>
-                </div>
-                <div v-if="row.status === 'received'" class="space-y-3">
-                  <div class="space-y-2">
-                    <Label>{{ t("receivedNote") }}</Label>
-                    <Input v-model="row.received_note" class="h-11" />
-                  </div>
-                  <div class="space-y-2">
-                    <Label>{{ t("receivedProof") }}</Label>
-                    <UploadImage
-                      v-model="row.receivedProofFile"
-                      :existing-images="row.existingReceivedProof"
-                      @existing-removed="
-                        () => {
-                          row.existingReceivedProof = [];
-                          row.received_proof_image = null;
-                        }
-                      "
-                    />
-                  </div>
-                </div>
-              </div>
-            </template>
-
-            <div class="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                class="h-11 w-full"
-                @click="cancelStatusEdit"
-              >
-                {{ t("cancel") }}
-              </Button>
-              <Button
-                class="h-11 w-full"
-                :loading="savingDetailStatus"
-                @click="saveDetailStatus"
-              >
-                {{ t("updateStatus") }}
-              </Button>
-            </div>
-          </template>
-
-          <template v-else>
-            <Badge :class="statusBadgeClass(detailItem.status)">
-              {{ labelStatus(detailItem.status) }}
-            </Badge>
-            <div v-if="detailItem.status === 'received'" class="space-y-2 pt-2">
-              <div>
-                <div class="text-xs text-neutral-500">{{ t("receivedNote") }}</div>
-                <div>{{ detailItem.received_note || "—" }}</div>
-              </div>
-              <button
-                v-if="getImageUrl(detailItem.received_proof_image)"
-                type="button"
-                @click="openImagePreview(detailItem.received_proof_image)"
-              >
-                <img
-                  :src="getImageUrl(detailItem.received_proof_image)"
-                  alt=""
-                  class="h-24 rounded-lg object-cover"
-                />
-              </button>
-            </div>
-          </template>
+          <div class="text-neutral-700">
+            {{ detailItem.received_note || "—" }}
+          </div>
+          <button
+            v-if="getImageUrl(detailItem.received_proof_image)"
+            type="button"
+            @click="openImagePreview(detailItem.received_proof_image)"
+          >
+            <img
+              :src="getImageUrl(detailItem.received_proof_image)"
+              alt=""
+              class="h-24 rounded-lg object-cover"
+            />
+          </button>
         </div>
       </div>
 
       <template #actions>
         <Button
           variant="outline"
-          class="h-11 w-full"
+          class="h-11 w-full sm:w-auto"
           @click="showDetailModal = false"
         >
-          {{ t("cancel") }}
+          {{ t("close") }}
         </Button>
         <Button
           v-if="detailItem && canEditRow(detailItem)"
-          class="h-11 w-full"
+          variant="outline"
+          class="h-11 w-full sm:w-auto"
           @click="openEdit(detailItem)"
         >
           {{ t("editPurchasing") }}
         </Button>
         <Button
-          v-else
-          class="h-11 w-full"
-          @click="showDetailModal = false"
+          v-if="
+            detailItem && canManageStatus && detailItem.status !== 'received'
+          "
+          class="h-11 w-full sm:w-auto"
+          @click="startStatusEdit"
         >
-          {{ t("cancel") }}
+          {{ t("updateStatus") }}
+        </Button>
+      </template>
+    </Dialog>
+
+    <!-- Perbarui status PO -->
+    <Dialog
+      :open="showStatusModal"
+      :title="t('updateStatus')"
+      :description="detailItem?.po_code || ''"
+      class="max-w-xl"
+      actions-class="grid w-full grid-cols-2 gap-2"
+      @update:open="onStatusModalOpen"
+    >
+      <div v-if="detailItem" class="space-y-4">
+        <div>
+          <div class="inline-flex w-full rounded-lg bg-neutral-100 p-1">
+            <button
+              type="button"
+              :class="
+                cn(
+                  'flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  detailStatusScope === 'order'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800',
+                )
+              "
+              @click="detailStatusScope = 'order'"
+            >
+              {{ t("statusScopeOrder") }}
+            </button>
+            <button
+              type="button"
+              :class="
+                cn(
+                  'flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  detailStatusScope === 'items'
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800',
+                )
+              "
+              @click="detailStatusScope = 'items'"
+            >
+              {{ t("statusScopeItems") }}
+            </button>
+          </div>
+          <p class="mt-2 text-xs text-neutral-500">{{ t("statusScopeHint") }}</p>
+        </div>
+
+        <template v-if="detailStatusScope === 'order'">
+          <div class="space-y-2">
+            <Label>{{ t("purchasingStatus") }}</Label>
+            <Select
+              :model-value="detailStatus"
+              :items="itemStatusItems"
+              @update:model-value="(v) => (detailStatus = v)"
+            >
+              <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="item in itemStatusItems"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div v-if="detailStatus === 'received'" class="space-y-3">
+            <div class="space-y-2">
+              <Label>{{ t("receivedNote") }}</Label>
+              <Input v-model="detailReceivedNote" class="h-11" />
+            </div>
+            <div class="space-y-2">
+              <Label>{{ t("receivedProof") }}</Label>
+              <UploadImage
+                v-model="detailReceivedProofFile"
+                :existing-images="detailExistingReceivedProof"
+                @existing-removed="detailExistingReceivedProof = []"
+              />
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              class="h-9"
+              @click="applyDetailStatusToAllItems"
+            >
+              {{ t("applyStatusToAll") }}
+            </Button>
+          </div>
+          <div
+            v-for="row in detailItemStatuses"
+            :key="row.id"
+            class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3"
+          >
+            <div class="line-clamp-2 text-sm font-medium">
+              {{ displayLocalized(row.item_name) }}
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="space-y-2">
+                <Label>{{ t("purchasingStatus") }}</Label>
+                <Select
+                  :model-value="row.status"
+                  :items="itemStatusItems"
+                  @update:model-value="(v) => (row.status = v)"
+                >
+                  <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem
+                        v-for="opt in itemStatusItems"
+                        :key="opt.value"
+                        :value="opt.value"
+                      >
+                        {{ opt.label }}
+                      </SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("supplier") }}</Label>
+                <Input v-model="row.supplier" class="h-11" />
+              </div>
+            </div>
+            <div v-if="row.status === 'received'" class="space-y-3">
+              <div class="space-y-2">
+                <Label>{{ t("receivedNote") }}</Label>
+                <Input v-model="row.received_note" class="h-11" />
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("receivedProof") }}</Label>
+                <UploadImage
+                  v-model="row.receivedProofFile"
+                  :existing-images="row.existingReceivedProof"
+                  @existing-removed="
+                    () => {
+                      row.existingReceivedProof = [];
+                      row.received_proof_image = null;
+                    }
+                  "
+                />
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <template #actions>
+        <Button
+          variant="outline"
+          class="h-11 w-full"
+          :disabled="savingDetailStatus"
+          @click="backFromStatusEdit"
+        >
+          {{ t("back") }}
+        </Button>
+        <Button
+          class="h-11 w-full"
+          :loading="savingDetailStatus"
+          @click="saveDetailStatus"
+        >
+          {{ t("updateStatus") }}
         </Button>
       </template>
     </Dialog>

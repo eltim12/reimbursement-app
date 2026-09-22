@@ -1,15 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { Pencil, Plus, Search, Trash2, Users } from "@lucide/vue";
+import { ExternalLink, Search, Users } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import CardContent from "@/components/ui/CardContent.vue";
-import CardHeader from "@/components/ui/CardHeader.vue";
-import CardTitle from "@/components/ui/CardTitle.vue";
-import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
-import Dialog from "@/components/ui/Dialog.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
 import Select from "@/components/ui/Select.vue";
@@ -26,7 +23,7 @@ import api from "@/services/api";
 const router = useRouter();
 const { t } = useI18n();
 const { showToast } = useToast();
-const { companyFilterItems, loadCompanies, companies } = useCompanies();
+const { companyFilterItems, loadCompanies } = useCompanies();
 
 const currentUser = computed(() => {
   try {
@@ -39,33 +36,18 @@ const currentUser = computed(() => {
 const isManagement = computed(() => currentUser.value.role === "management");
 const isStakeholder = computed(() => currentUser.value.role === "stakeholder");
 const isSuperadmin = computed(() => currentUser.value.role === "superadmin");
-const canViewUsers = computed(
-  () => isManagement.value || isStakeholder.value || isSuperadmin.value,
-);
 const canManageUsers = computed(
   () => isManagement.value || isSuperadmin.value,
 );
 
+const canViewUsers = computed(
+  () => isManagement.value || isStakeholder.value || isSuperadmin.value,
+);
+
 const loading = ref(false);
-const saving = ref(false);
 const users = ref([]);
 const search = ref("");
 const companyFilter = ref("");
-const showModal = ref(false);
-const editingId = ref(null);
-const showDeleteModal = ref(false);
-const pendingDeleteUser = ref(null);
-const deleting = ref(false);
-
-const form = ref({
-  email: "",
-  name: "",
-  role: "user",
-  password: "",
-  confirmPassword: "",
-  company_id: "",
-  purchasing_editor: false,
-});
 
 const roleItems = computed(() => [
   { label: t("roleUser"), value: "user" },
@@ -74,10 +56,6 @@ const roleItems = computed(() => [
   { label: t("roleFinance"), value: "finance" },
   { label: t("roleStakeholder"), value: "stakeholder" },
 ]);
-
-const companyFormItems = computed(() =>
-  companies.value.map((c) => ({ value: String(c.id), label: c.name })),
-);
 
 const filteredUsers = computed(() => {
   const q = search.value.trim().toLowerCase();
@@ -96,15 +74,7 @@ const roleLabel = (role) => {
   return match?.label || role;
 };
 
-const emptyForm = () => ({
-  email: "",
-  name: "",
-  role: "user",
-  password: "",
-  confirmPassword: "",
-  company_id: companyFilter.value || "",
-  purchasing_editor: false,
-});
+const colCount = computed(() => (isSuperadmin.value ? 6 : 5));
 
 const loadUsers = async () => {
   try {
@@ -114,138 +84,16 @@ const loadUsers = async () => {
       params.companyId = companyFilter.value;
     }
     const response = await api.getAdminUsers(params);
-    if (response.success) {
-      users.value = response.users;
-    }
+    users.value = response.users || [];
   } catch (error) {
-    showToast(
-      error.response?.data?.error || t("failedToLoadUsers"),
-      "error",
-    );
+    showToast(error.response?.data?.error || t("failedToLoadUsers"), "error");
   } finally {
     loading.value = false;
   }
 };
 
-const openCreate = () => {
-  editingId.value = null;
-  form.value = emptyForm();
-  showModal.value = true;
-};
-
-const openEdit = (user) => {
-  editingId.value = user.id;
-  form.value = {
-    email: user.email,
-    name: user.name || "",
-    role: user.role || "user",
-    password: "",
-    confirmPassword: "",
-    company_id: user.company_id != null ? String(user.company_id) : "",
-    purchasing_editor: !!user.purchasing_editor,
-  };
-  showModal.value = true;
-};
-
-const closeModal = () => {
-  showModal.value = false;
-  editingId.value = null;
-  form.value = emptyForm();
-};
-
-const saveUser = async () => {
-  if (!form.value.email.trim() || !/.+@.+\..+/.test(form.value.email)) {
-    showToast(t("emailValid"), "error");
-    return;
-  }
-  if (!form.value.name.trim()) {
-    showToast(t("nameRequired"), "error");
-    return;
-  }
-  if (isSuperadmin.value && !form.value.company_id) {
-    showToast(t("selectCompanyFirst"), "error");
-    return;
-  }
-  if (!editingId.value && !form.value.password) {
-    showToast(t("passwordRequired"), "error");
-    return;
-  }
-  if (form.value.password) {
-    if (form.value.password.length < 6) {
-      showToast(t("passwordMinLength"), "error");
-      return;
-    }
-    if (form.value.password !== form.value.confirmPassword) {
-      showToast(t("passwordsMismatch"), "error");
-      return;
-    }
-  }
-
-  try {
-    saving.value = true;
-    const payload = {
-      email: form.value.email.trim(),
-      name: form.value.name.trim(),
-      role: form.value.role,
-      purchasing_editor: !!form.value.purchasing_editor,
-    };
-    if (form.value.password) payload.password = form.value.password;
-    if (isSuperadmin.value && form.value.company_id) {
-      payload.company_id = Number(form.value.company_id);
-    }
-
-    if (editingId.value) {
-      await api.updateAdminUser(editingId.value, payload);
-      showToast(t("userUpdated"), "success");
-    } else {
-      payload.password = form.value.password;
-      await api.createAdminUser(payload);
-      showToast(t("userCreated"), "success");
-    }
-    closeModal();
-    await loadUsers();
-  } catch (error) {
-    showToast(
-      error.response?.data?.error || t("failedToSaveUser"),
-      "error",
-    );
-  } finally {
-    saving.value = false;
-  }
-};
-
-const deleteUser = (user) => {
-  if (user.id === currentUser.value.id) {
-    showToast(t("cannotDeleteSelf"), "error");
-    return;
-  }
-  pendingDeleteUser.value = user;
-  showDeleteModal.value = true;
-};
-
-const cancelDeleteUser = () => {
-  showDeleteModal.value = false;
-  pendingDeleteUser.value = null;
-};
-
-const confirmDeleteUser = async () => {
-  if (!pendingDeleteUser.value) return;
-
-  try {
-    deleting.value = true;
-    await api.deleteAdminUser(pendingDeleteUser.value.id);
-    showDeleteModal.value = false;
-    pendingDeleteUser.value = null;
-    showToast(t("userDeleted"), "success");
-    await loadUsers();
-  } catch (error) {
-    showToast(
-      error.response?.data?.error || t("failedToDeleteUser"),
-      "error",
-    );
-  } finally {
-    deleting.value = false;
-  }
+const openConsole = () => {
+  window.open("https://admin.whtb.glass", "_blank", "noopener,noreferrer");
 };
 
 onMounted(async () => {
@@ -270,19 +118,23 @@ onMounted(async () => {
           </h1>
           <p class="text-sm text-neutral-500">{{ t("usersSubtitle") }}</p>
           <p class="mt-2 text-sm text-neutral-600">
-            Module access (finance / HR) is managed in the
+            {{ t("usersReadOnlyHint") }}
             <a
               class="font-medium text-neutral-900 underline underline-offset-2"
               href="https://admin.whtb.glass"
               target="_blank"
               rel="noopener noreferrer"
-              >platform console</a
-            >.
+            >admin.whtb.glass</a>.
           </p>
         </div>
-        <Button v-if="canManageUsers" class="h-10" @click="openCreate">
-          <Plus class="h-4 w-4" />
-          {{ t("createUser") }}
+        <Button
+          v-if="canManageUsers"
+          variant="outline"
+          class="h-10 gap-2"
+          @click="openConsole"
+        >
+          <ExternalLink class="h-4 w-4" />
+          {{ t("openPlatformConsole") }}
         </Button>
       </div>
 
@@ -370,26 +222,17 @@ onMounted(async () => {
                 <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                   {{ t("createdAt") }}
                 </th>
-                <th
-                  v-if="canManageUsers"
-                  class="whitespace-nowrap px-4 py-3 text-right font-medium text-neutral-500"
-                >
-                  {{ t("tableAction") }}
-                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="loading">
-                <td
-                  :colspan="(isSuperadmin ? 6 : 5) + (canManageUsers ? 1 : 0)"
-                  class="px-4 py-8 text-center text-neutral-500"
-                >
-                  Loading…
+                <td :colspan="colCount" class="p-0">
+                  <DataSkeleton variant="table" :rows="6" :cols="colCount" />
                 </td>
               </tr>
               <tr v-else-if="filteredUsers.length === 0">
                 <td
-                  :colspan="(isSuperadmin ? 6 : 5) + (canManageUsers ? 1 : 0)"
+                  :colspan="colCount"
                   class="px-4 py-8 text-center text-neutral-500"
                 >
                   {{ t("noUsers") }}
@@ -417,6 +260,7 @@ onMounted(async () => {
                   {{
                     user.role === "finance" ||
                     user.role === "management" ||
+                    user.role === "admin" ||
                     user.role === "stakeholder"
                       ? t("purchasingFeatureOn")
                       : user.purchasing_editor
@@ -431,158 +275,11 @@ onMounted(async () => {
                       : "—"
                   }}
                 </td>
-                <td v-if="canManageUsers" class="whitespace-nowrap px-4 py-3 text-right">
-                  <div class="inline-flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      @click="openEdit(user)"
-                    >
-                      <Pencil class="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      class="text-red-600 hover:bg-red-50 hover:text-red-700"
-                      @click="deleteUser(user)"
-                    >
-                      <Trash2 class="h-4 w-4" />
-                    </Button>
-                  </div>
-                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </Card>
     </div>
-
-    <Dialog
-      :open="showModal"
-      :title="editingId ? t('editUser') : t('createUser')"
-      class="max-w-lg"
-      @update:open="(v) => (v ? (showModal = true) : closeModal())"
-    >
-      <form id="user-form" class="space-y-4" @submit.prevent="saveUser">
-        <div class="space-y-2">
-          <Label for="user-name">{{ t("fullName") }}</Label>
-          <Input id="user-name" v-model="form.name" required />
-        </div>
-        <div class="space-y-2">
-          <Label for="user-email">{{ t("email") }}</Label>
-          <Input id="user-email" v-model="form.email" type="email" required />
-        </div>
-        <div v-if="isSuperadmin" class="space-y-2">
-          <Label>{{ t("filterCompany") }}</Label>
-          <Select
-            :model-value="form.company_id"
-            :items="companyFormItems"
-            :placeholder="t('selectCompanyFirst')"
-            @update:model-value="(v) => (form.company_id = v ?? '')"
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem
-                  v-for="item in companyFormItems"
-                  :key="item.value"
-                  :value="item.value"
-                >
-                  {{ item.label }}
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="space-y-2">
-          <Label>{{ t("role") }}</Label>
-          <Select
-            :model-value="form.role"
-            :items="roleItems"
-            @update:model-value="(v) => (form.role = v)"
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem
-                  v-for="item in roleItems"
-                  :key="item.value"
-                  :value="item.value"
-                >
-                  {{ item.label }}
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
-          <label class="flex items-start gap-3 text-sm">
-            <input
-              v-model="form.purchasing_editor"
-              type="checkbox"
-              class="mt-1 h-4 w-4 rounded border-neutral-300"
-              :disabled="
-                form.role === 'finance' ||
-                form.role === 'management' ||
-                form.role === 'stakeholder'
-              "
-            />
-            <span>
-              <span class="font-medium">{{ t("purchasingEditor") }}</span>
-              <span class="mt-0.5 block text-xs text-neutral-500">
-                {{ t("purchasingEditorHint") }}
-              </span>
-            </span>
-          </label>
-        </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="space-y-2">
-            <Label for="user-password">
-              {{ t("password") }}
-              <span v-if="editingId" class="font-normal text-neutral-400">
-                ({{ t("passwordOptional") }})
-              </span>
-            </Label>
-            <Input
-              id="user-password"
-              v-model="form.password"
-              type="password"
-              :required="!editingId"
-            />
-          </div>
-          <div class="space-y-2">
-            <Label for="user-confirm">{{ t("confirmPassword") }}</Label>
-            <Input
-              id="user-confirm"
-              v-model="form.confirmPassword"
-              type="password"
-              :required="!editingId || !!form.password"
-            />
-          </div>
-        </div>
-      </form>
-      <template #actions>
-        <Button variant="outline" type="button" @click="closeModal">
-          {{ t("cancel") }}
-        </Button>
-        <Button type="submit" form="user-form" class="h-11" :loading="saving">
-          {{ editingId ? t("saveUser") : t("createUser") }}
-        </Button>
-      </template>
-    </Dialog>
-
-    <ConfirmDialog
-      :open="showDeleteModal"
-      :title="t('areYouSureDeleteUser')"
-      :description="pendingDeleteUser?.email || ''"
-      :loading="deleting"
-      @update:open="(v) => !v && cancelDeleteUser()"
-      @confirm="confirmDeleteUser"
-      @cancel="cancelDeleteUser"
-    />
   </AppShell>
 </template>

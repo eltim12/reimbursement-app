@@ -3,13 +3,13 @@ const path = require('path');
 const fs = require('fs-extra');
 
 /**
- * Compress image to under 1MB and save to public folder
+ * Compress image to under 400KB and save to public folder
  * @param {Buffer} imageBuffer - Image buffer
  * @param {string} filename - Original filename
  * @returns {Promise<{filename: string, path: string, size: number}>}
  */
 async function compressAndSaveImage(imageBuffer, filename) {
-  const maxSizeBytes = 1024 * 1024; // 1MB
+  const maxSizeBytes = 400 * 1024; // 400KB archive target
   const publicDir = path.join(__dirname, '..', 'public', 'images');
   
   // Ensure public/images directory exists

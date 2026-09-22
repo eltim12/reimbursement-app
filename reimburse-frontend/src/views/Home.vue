@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { FileText, Plus, Search, Trash2 } from "@lucide/vue";
+import { ChevronRight, FileText, Plus, Search, Trash2 } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
@@ -10,6 +10,7 @@ import CardDescription from "@/components/ui/CardDescription.vue";
 import CardHeader from "@/components/ui/CardHeader.vue";
 import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Input from "@/components/ui/Input.vue";
 import Label from "@/components/ui/Label.vue";
 import Select from "@/components/ui/Select.vue";
@@ -46,16 +47,21 @@ const canViewAllLists = computed(
     isStakeholder.value ||
     isSuperadmin.value,
 );
-const canCreateLists = computed(
-  () =>
-    !isManagement.value &&
-    !isFinance.value &&
-    !isStakeholder.value &&
-    !isSuperadmin.value,
+/** user / admin / management / finance — same create flow as a normal user (own lists). */
+const canCreateLists = computed(() =>
+  ["user", "admin", "management", "finance"].includes(
+    currentUser.value.role,
+  ),
 );
 const canDeleteLists = computed(
-  () => !isFinance.value && !isStakeholder.value,
+  () => !isStakeholder.value && !isSuperadmin.value,
 );
+/** Delete only own lists unless management (company-wide). */
+const canDeleteList = (list) => {
+  if (!canDeleteLists.value) return false;
+  if (isManagement.value) return true;
+  return Number(list?.userId) === Number(currentUser.value.id);
+};
 const listTableColspan = computed(() => {
   let cols = 2; // name + createdAt
   if (canViewAllLists.value) cols += 1;
@@ -103,6 +109,7 @@ const loadLists = async () => {
           id: list.id,
           name: list.name,
           createdAt: list.createdAt,
+          userId: list.userId,
           ownerName: list.ownerName,
           ownerEmail: list.ownerEmail,
           companyName: list.companyName,
@@ -145,6 +152,7 @@ const openList = (id) => {
 };
 
 const requestDeleteList = (list) => {
+  if (!canDeleteList(list)) return;
   pendingDeleteList.value = list;
   showDeleteModal.value = true;
 };
@@ -276,7 +284,78 @@ onMounted(async () => {
           </div>
         </div>
 
-        <Card class="overflow-hidden p-0">
+        <!-- Mobile: card list (shadcn Item-style rows) -->
+        <div class="space-y-3 md:hidden">
+          <DataSkeleton v-if="loading" variant="cards" :rows="5" />
+          <div
+            v-else-if="filteredLists.length === 0"
+            class="rounded-xl border border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500"
+          >
+            {{ t("noLists") }}
+          </div>
+          <template v-else>
+            <div
+              v-for="list in filteredLists"
+              :key="list.id"
+              class="flex w-full items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-colors active:bg-neutral-50"
+              role="button"
+              tabindex="0"
+              @click="openList(list.id)"
+              @keydown.enter.prevent="openList(list.id)"
+            >
+              <div class="min-w-0 flex-1 space-y-1.5">
+                <p class="truncate font-medium text-neutral-900">
+                  {{ list.name }}
+                </p>
+                <p
+                  v-if="isSuperadmin && list.companyName"
+                  class="truncate text-sm text-neutral-600"
+                >
+                  {{ list.companyName }}
+                </p>
+                <div
+                  v-if="canViewAllLists"
+                  class="min-w-0 text-sm text-neutral-600"
+                >
+                  <span class="font-medium text-neutral-800">{{
+                    list.ownerName || "—"
+                  }}</span>
+                  <span
+                    v-if="list.ownerEmail"
+                    class="mt-0.5 block truncate text-xs text-neutral-500"
+                  >
+                    {{ list.ownerEmail }}
+                  </span>
+                </div>
+                <p class="font-mono text-xs text-neutral-500">
+                  {{ new Date(list.createdAt).toLocaleDateString() }}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-1">
+                <Button
+                  v-if="canDeleteList(list)"
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  @click.stop="requestDeleteList(list)"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </Button>
+                <ChevronRight class="h-4 w-4 text-neutral-400" />
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Desktop: table -->
+        <DataSkeleton
+          v-if="loading"
+          class="hidden md:block"
+          variant="table"
+          :rows="6"
+          :cols="listTableColspan"
+        />
+        <Card v-else class="hidden overflow-hidden p-0 md:block">
           <div class="overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -308,15 +387,7 @@ onMounted(async () => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="loading">
-                  <td
-                    :colspan="listTableColspan"
-                    class="px-4 py-8 text-center text-neutral-500"
-                  >
-                    Loading…
-                  </td>
-                </tr>
-                <tr v-else-if="filteredLists.length === 0">
+                <tr v-if="filteredLists.length === 0">
                   <td
                     :colspan="listTableColspan"
                     class="px-4 py-8 text-center text-neutral-500"
@@ -358,6 +429,7 @@ onMounted(async () => {
                     class="whitespace-nowrap px-4 py-3 text-right"
                   >
                     <Button
+                      v-if="canDeleteList(list)"
                       variant="ghost"
                       size="icon-sm"
                       class="text-red-600 hover:bg-red-50 hover:text-red-700"

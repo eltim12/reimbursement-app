@@ -2,9 +2,11 @@
 import { onUnmounted, reactive, ref, watch } from "vue";
 import { CheckCircle2, ImageIcon, Upload, X } from "@lucide/vue";
 import Button from "@/components/ui/Button.vue";
+import Progress from "@/components/ui/Progress.vue";
+import ProgressLabel from "@/components/ui/ProgressLabel.vue";
 import { useI18n } from "@/composables/useI18n";
 import { cn } from "@/lib/utils";
-import { compressImageToBlob } from "@/utils/imageCompression";
+import { compressImageToBlob, ARCHIVE_MAX_BYTES } from "@/utils/imageCompression";
 
 const props = defineProps({
   modelValue: {
@@ -23,9 +25,15 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  /** Max size of the raw file before compression (bytes). */
   maxSize: {
     type: Number,
-    default: 5 * 1024 * 1024,
+    default: 15 * 1024 * 1024,
+  },
+  /** Target size after JPEG compression (bytes). */
+  compressMaxBytes: {
+    type: Number,
+    default: ARCHIVE_MAX_BYTES,
   },
   maxFiles: {
     type: Number,
@@ -82,6 +90,9 @@ function validateFile(file) {
   if (!file.type.startsWith("image/")) {
     return { valid: false, error: "File must be an image" };
   }
+  if (file.size > props.maxSize) {
+    return { valid: false, error: "File is too large" };
+  }
   return { valid: true };
 }
 
@@ -134,8 +145,10 @@ async function addFile(file) {
   fileObj.preview = await generatePreview(file);
 
   try {
-    const maxSizeMB = props.maxSize / (1024 * 1024);
-    const compressedBlob = await compressImageToBlob(file, maxSizeMB);
+    const compressedBlob = await compressImageToBlob(
+      file,
+      props.compressMaxBytes,
+    );
     const newName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
     const compressedFile = new File([compressedBlob], newName, {
       type: "image/jpeg",
@@ -152,12 +165,6 @@ async function addFile(file) {
     console.error("Image compression failed:", error);
     fileObj.status = "error";
     fileObj.errorMessage = "Compression failed";
-    if (file.size <= props.maxSize) {
-      fileObj.status = "pending";
-      fileObj.file = file;
-      emit("file-added", fileObj);
-      updateModelValue();
-    }
   }
 }
 
@@ -392,12 +399,16 @@ onUnmounted(() => {
             <div class="text-xs text-neutral-500">
               {{ formatFileSize(file.size) }}
             </div>
-            <div
+            <Progress
               v-if="file.status === 'compressing'"
-              class="mt-1 text-xs text-neutral-500"
+              indeterminate
+              class="mt-2"
+              aria-label="Compressing"
             >
-              Compressing…
-            </div>
+              <ProgressLabel class="text-xs font-normal text-neutral-500">
+                Compressing…
+              </ProgressLabel>
+            </Progress>
             <div
               v-if="file.status === 'error'"
               class="mt-1 text-xs text-red-600"
