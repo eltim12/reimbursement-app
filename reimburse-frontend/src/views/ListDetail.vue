@@ -9,7 +9,14 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import DataSkeleton from "@/components/ui/DataSkeleton.vue";
-import PaginationBar from "@/components/ui/PaginationBar.vue";
+import Pagination from "@/components/ui/pagination/Pagination.vue";
+import PaginationContent from "@/components/ui/pagination/PaginationContent.vue";
+import PaginationEllipsis from "@/components/ui/pagination/PaginationEllipsis.vue";
+import PaginationItem from "@/components/ui/pagination/PaginationItem.vue";
+import PaginationLink from "@/components/ui/pagination/PaginationLink.vue";
+import PaginationNext from "@/components/ui/pagination/PaginationNext.vue";
+import PaginationPrevious from "@/components/ui/pagination/PaginationPrevious.vue";
+import { useMinMd } from "@/composables/useMinMd";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Field from "@/components/ui/Field.vue";
@@ -35,6 +42,7 @@ import {
 } from "@/utils/formatters";
 import { exportExcel } from "@/utils/excelExport";
 import { exportPDF } from "@/utils/pdfExport";
+import { paginationItems } from "@/utils/pagination";
 
 const route = useRoute();
 const router = useRouter();
@@ -71,6 +79,8 @@ const currencyItems = computed(() => [
 
 const ENTRY_PAGE_SIZE = 20;
 const entryPage = ref(1);
+const desktopList = useMinMd();
+const entryScroll = ref(null);
 const loading = ref(false);
 const listError = ref("");
 const saving = ref(false);
@@ -110,10 +120,29 @@ const pagedEntries = computed(() => {
   }));
 });
 const formatEntryDate = (value) => formatLocaleDate(value, locale.value);
+const entryPageItems = computed(() =>
+  paginationItems(visibleEntryPage.value, entryPageCount.value),
+);
+const entryRangeLabel = computed(() => {
+  const count = entries.value.length;
+  const start = count === 0 ? 0 : (visibleEntryPage.value - 1) * ENTRY_PAGE_SIZE + 1;
+  const end = count === 0 ? 0 : Math.min(count, visibleEntryPage.value * ENTRY_PAGE_SIZE);
+  return t("listsRange")
+    .replaceAll("{start}", String(start))
+    .replaceAll("{end}", String(end))
+    .replaceAll("{total}", String(count));
+});
+const showEntryPage = (next) => {
+  const pageNumber = Math.min(entryPageCount.value, Math.max(1, next));
+  if (pageNumber === entryPage.value) return;
+  entryPage.value = pageNumber;
+  entryScroll.value?.scrollTo({ top: 0 });
+};
 const showEntryOnPage = (match) => {
   const index = entries.value.findIndex(match);
   if (index < 0) return;
   entryPage.value = Math.floor(index / ENTRY_PAGE_SIZE) + 1;
+  entryScroll.value?.scrollTo({ top: 0 });
 };
 
 const emptyEntryForm = () => ({
@@ -813,7 +842,11 @@ onMounted(async () => {
           </Button>
         </div>
 
-        <div v-else class="space-y-3 md:hidden">
+        <div
+          v-else-if="!desktopList"
+          ref="entryScroll"
+          class="max-h-[min(36rem,calc(100dvh-12rem))] space-y-3 overflow-y-auto overscroll-y-contain"
+        >
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
             v-else-if="entries.length === 0"
@@ -892,10 +925,13 @@ onMounted(async () => {
         </div>
 
         <Card
-          v-if="!listError || loading"
-          class="hidden w-full overflow-hidden p-0 md:block"
+          v-if="desktopList && (!listError || loading)"
+          class="max-h-[min(36rem,calc(100dvh-12rem))] w-full overflow-hidden p-0"
         >
-          <div class="w-full overflow-x-auto">
+          <div
+            ref="entryScroll"
+            class="max-h-[min(36rem,calc(100dvh-12rem))] w-full overflow-auto overscroll-y-contain"
+          >
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
                 <tr class="text-left">
@@ -1006,14 +1042,43 @@ onMounted(async () => {
             </table>
           </div>
         </Card>
-        <PaginationBar
+        <div
           v-if="!loading && !listError"
-          :page="visibleEntryPage"
-          :page-size="ENTRY_PAGE_SIZE"
-          :total="entries.length"
-          :label="t('entriesPagination')"
-          @update:page="(next) => (entryPage = next)"
-        />
+          class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p class="text-sm text-neutral-500" role="status">{{ entryRangeLabel }}</p>
+          <Pagination class="mx-0 w-auto justify-end" :label="t('entriesPagination')">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  :disabled="visibleEntryPage <= 1"
+                  :label="t('previous')"
+                  @click="showEntryPage(visibleEntryPage - 1)"
+                />
+              </PaginationItem>
+              <PaginationItem
+                v-for="(item, index) in entryPageItems"
+                :key="`${item.type}-${item.value ?? index}`"
+              >
+                <PaginationLink
+                  v-if="item.type === 'page'"
+                  :is-active="item.value === visibleEntryPage"
+                  @click="showEntryPage(item.value)"
+                >
+                  {{ item.value }}
+                </PaginationLink>
+                <PaginationEllipsis v-else :label="t('paginationMore')" />
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationNext
+                  :disabled="visibleEntryPage >= entryPageCount"
+                  :label="t('next')"
+                  @click="showEntryPage(visibleEntryPage + 1)"
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
       </div>
     </div>
 

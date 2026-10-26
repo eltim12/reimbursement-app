@@ -12,7 +12,14 @@ import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Input from "@/components/ui/Input.vue";
-import PaginationBar from "@/components/ui/PaginationBar.vue";
+import Pagination from "@/components/ui/pagination/Pagination.vue";
+import PaginationContent from "@/components/ui/pagination/PaginationContent.vue";
+import PaginationEllipsis from "@/components/ui/pagination/PaginationEllipsis.vue";
+import PaginationItem from "@/components/ui/pagination/PaginationItem.vue";
+import PaginationLink from "@/components/ui/pagination/PaginationLink.vue";
+import PaginationNext from "@/components/ui/pagination/PaginationNext.vue";
+import PaginationPrevious from "@/components/ui/pagination/PaginationPrevious.vue";
+import { useMinMd } from "@/composables/useMinMd";
 import Label from "@/components/ui/Label.vue";
 import Select from "@/components/ui/Select.vue";
 import SelectContent from "@/components/ui/SelectContent.vue";
@@ -25,6 +32,7 @@ import { useCompanies } from "@/composables/useCompanies";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import { formatLocaleDate } from "@/utils/formatters";
+import { paginationItems } from "@/utils/pagination";
 
 const router = useRouter();
 const { t, locale } = useI18n();
@@ -77,6 +85,8 @@ const loading = ref(false);
 const lists = ref([]);
 const total = ref(0);
 const page = ref(1);
+const desktopList = useMinMd();
+const listScroll = ref(null);
 const loadError = ref("");
 const newListName = ref("");
 const search = ref("");
@@ -88,6 +98,19 @@ let searchTimer = null;
 let loadSeq = 0;
 
 const formatCreatedAt = (value) => formatLocaleDate(value, locale.value);
+
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil((total.value || 0) / PAGE_SIZE) || 1),
+);
+const pageItems = computed(() => paginationItems(page.value, pageCount.value));
+const rangeLabel = computed(() => {
+  const start = total.value === 0 ? 0 : (page.value - 1) * PAGE_SIZE + 1;
+  const end = total.value === 0 ? 0 : Math.min(total.value, page.value * PAGE_SIZE);
+  return t("listsRange")
+    .replaceAll("{start}", String(start))
+    .replaceAll("{end}", String(end))
+    .replaceAll("{total}", String(total.value));
+});
 
 const loadLists = async () => {
   const seq = ++loadSeq;
@@ -173,7 +196,11 @@ const clearListFilters = async () => {
 };
 
 const goToPage = (next) => {
-  page.value = next;
+  if (loading.value) return;
+  const pageNumber = Math.min(pageCount.value, Math.max(1, next));
+  if (pageNumber === page.value) return;
+  page.value = pageNumber;
+  listScroll.value?.scrollTo({ top: 0 });
   loadLists();
 };
 
@@ -245,15 +272,15 @@ onMounted(async () => {
 
 <template>
   <AppShell>
-    <div class="space-y-5">
-      <div class="flex flex-col gap-1">
+    <div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+      <div class="flex shrink-0 flex-col gap-1">
         <h1 class="text-2xl font-semibold text-neutral-900">
           {{ t("listsTitle") }}
         </h1>
         <p class="text-sm text-neutral-500">{{ t("listsSubtitle") }}</p>
       </div>
 
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent class="flex items-center gap-3 p-5">
             <div class="rounded-lg bg-neutral-100 p-3">
@@ -269,7 +296,7 @@ onMounted(async () => {
         </Card>
       </div>
 
-      <Card v-if="canCreateLists">
+      <Card v-if="canCreateLists" class="shrink-0">
         <CardHeader>
           <CardTitle>{{ t("createNewList") }}</CardTitle>
           <CardDescription>{{ t("newListName") }}</CardDescription>
@@ -295,8 +322,8 @@ onMounted(async () => {
         </CardContent>
       </Card>
 
-      <div class="space-y-3">
-        <div class="rounded-xl border border-neutral-200 bg-white p-4">
+      <div class="flex min-h-0 flex-1 flex-col gap-3">
+        <div class="shrink-0 rounded-xl border border-neutral-200 bg-white p-4">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p class="text-sm font-medium text-neutral-900">{{ t("searchLists") }}</p>
             <Button
@@ -355,6 +382,10 @@ onMounted(async () => {
         </div>
 
         <div
+          ref="listScroll"
+          class="min-h-48 flex-1 overflow-y-auto overscroll-y-contain"
+        >
+        <div
           v-if="loadError && !loading"
           role="alert"
           class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
@@ -372,7 +403,7 @@ onMounted(async () => {
         </div>
 
         <!-- Mobile: card list (shadcn Item-style rows) -->
-        <div v-else class="space-y-3 md:hidden">
+        <div v-else-if="!desktopList" class="space-y-3">
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
             v-else-if="lists.length === 0"
@@ -442,13 +473,12 @@ onMounted(async () => {
 
         <!-- Desktop: table -->
         <DataSkeleton
-          v-if="loading"
-          class="hidden md:block"
+          v-if="loading && desktopList"
           variant="table"
           :rows="6"
           :cols="listTableColspan"
         />
-        <Card v-else-if="!loadError" class="hidden overflow-hidden p-0 md:block">
+        <Card v-else-if="!loadError && desktopList" class="overflow-hidden p-0">
           <div class="overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -545,14 +575,44 @@ onMounted(async () => {
             </table>
           </div>
         </Card>
-        <PaginationBar
+        </div>
+        <div
           v-if="!loading && !loadError"
-          :page="page"
-          :page-size="PAGE_SIZE"
-          :total="total"
-          :label="t('listsPagination')"
-          @update:page="goToPage"
-        />
+          class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p class="text-sm text-neutral-500" role="status">{{ rangeLabel }}</p>
+          <Pagination class="mx-0 w-auto justify-end" :label="t('listsPagination')">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  :disabled="page <= 1"
+                  :label="t('previous')"
+                  @click="goToPage(page - 1)"
+                />
+              </PaginationItem>
+              <PaginationItem
+                v-for="(item, index) in pageItems"
+                :key="`${item.type}-${item.value ?? index}`"
+              >
+                <PaginationLink
+                  v-if="item.type === 'page'"
+                  :is-active="item.value === page"
+                  @click="goToPage(item.value)"
+                >
+                  {{ item.value }}
+                </PaginationLink>
+                <PaginationEllipsis v-else :label="t('paginationMore')" />
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationNext
+                  :disabled="page >= pageCount"
+                  :label="t('next')"
+                  @click="goToPage(page + 1)"
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
       </div>
     </div>
 

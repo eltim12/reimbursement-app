@@ -225,7 +225,7 @@ const go = (item) => {
 </script>
 
 <template>
-  <div class="flex h-screen overflow-hidden bg-neutral-50 text-neutral-900">
+  <div class="flex h-dvh overflow-hidden bg-neutral-50 text-neutral-900">
     <!-- Desktop sidebar -->
     <aside
       class="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-white md:flex"
@@ -358,9 +358,9 @@ const go = (item) => {
       </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header
-        class="flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-4 md:px-6"
+        class="flex h-16 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4 md:px-6"
       >
         <Button
           variant="ghost"
@@ -374,7 +374,7 @@ const go = (item) => {
         <LangToggle />
       </header>
 
-      <main class="flex-1 overflow-y-auto p-4 md:p-6">
+      <main class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain p-4 md:p-6">
         <slot />
       </main>
     </div>
