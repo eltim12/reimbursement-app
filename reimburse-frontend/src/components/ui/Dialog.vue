@@ -1,7 +1,8 @@
 <script setup>
+import { onUnmounted, watch } from "vue";
 import { cn } from "@/lib/utils";
 
-defineProps({
+const props = defineProps({
   open: Boolean,
   title: String,
   description: String,
@@ -15,7 +16,25 @@ defineProps({
   },
 });
 
-defineEmits(["update:open"]);
+const emit = defineEmits(["update:open"]);
+const titleId = `finance-dialog-title-${Math.random().toString(36).slice(2, 10)}`;
+
+const onKeydown = (event) => {
+  if (!props.open || event.key !== "Escape") return;
+  event.preventDefault();
+  emit("update:open", false);
+};
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) window.addEventListener("keydown", onKeydown);
+    else window.removeEventListener("keydown", onKeydown);
+  },
+  { immediate: true },
+);
+
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
@@ -29,6 +48,9 @@ defineEmits(["update:open"]);
         @click="$emit('update:open', false)"
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
         :class="
           cn(
             'relative z-10 flex max-h-[90vh] w-full max-w-sm origin-center flex-col rounded-xl border border-neutral-200 bg-white shadow-lg transition-[transform,opacity] duration-150 ease-out',
@@ -38,7 +60,7 @@ defineEmits(["update:open"]);
         style="animation: finance-dialog-in 150ms ease-out"
       >
         <div class="shrink-0 border-b border-neutral-100 px-6 py-4">
-          <h3 class="text-base font-medium text-neutral-900">{{ title }}</h3>
+          <h3 :id="titleId" class="text-base font-medium text-neutral-900">{{ title }}</h3>
           <p v-if="description" class="mt-1 text-sm text-neutral-500">
             {{ description }}
           </p>

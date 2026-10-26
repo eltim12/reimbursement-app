@@ -1,15 +1,16 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ChevronRight, FileText, Plus, Search, Trash2 } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import CardContent from "@/components/ui/CardContent.vue";
-import CardDescription from "@/components/ui/CardDescription.vue";
-import CardHeader from "@/components/ui/CardHeader.vue";
-import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import Dialog from "@/components/ui/Dialog.vue";
+import Field from "@/components/ui/Field.vue";
+import FieldDescription from "@/components/ui/FieldDescription.vue";
+import FieldLabel from "@/components/ui/FieldLabel.vue";
 import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Input from "@/components/ui/Input.vue";
 import Pagination from "@/components/ui/pagination/Pagination.vue";
@@ -89,6 +90,10 @@ const desktopList = useMinMd();
 const listScroll = ref(null);
 const loadError = ref("");
 const newListName = ref("");
+const nameError = ref("");
+const nameInput = ref(null);
+const showCreate = ref(false);
+const creating = ref(false);
 const search = ref("");
 const companyFilter = ref("");
 const showDeleteModal = ref(false);
@@ -204,28 +209,49 @@ const goToPage = (next) => {
   loadLists();
 };
 
-const createList = async () => {
-  if (!canCreateLists.value) return;
+const focusNameInput = async () => {
+  await nextTick();
+  const el = nameInput.value?.$el;
+  if (el instanceof HTMLElement) el.focus();
+};
 
-  if (!newListName.value.trim()) {
-    showToast(t("pleaseEnterListName"), "error");
+const closeCreate = () => {
+  if (creating.value) return;
+  showCreate.value = false;
+};
+
+const createList = async () => {
+  if (!canCreateLists.value || creating.value) return;
+
+  const name = newListName.value.trim();
+  if (!name) {
+    nameError.value = t("pleaseEnterListName");
+    await focusNameInput();
     return;
   }
 
+  nameError.value = "";
+  creating.value = true;
   try {
-    loading.value = true;
-    const response = await api.createList(newListName.value.trim());
+    const response = await api.createList(name);
     if (response.success) {
       showToast(`${t("createdNewList")}: ${response.list.name}`, "success");
       newListName.value = "";
+      showCreate.value = false;
       await router.push(`/lists/${response.list.id}`);
+      return;
     }
+    showToast(t("failedToCreateList"), "error");
   } catch {
     showToast(t("failedToCreateList"), "error");
   } finally {
-    loading.value = false;
+    creating.value = false;
   }
 };
+
+watch(showCreate, (open) => {
+  if (open) focusNameInput();
+});
 
 const openList = (id) => {
   router.push(`/lists/${id}`);
@@ -273,11 +299,22 @@ onMounted(async () => {
 <template>
   <AppShell>
     <div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
-      <div class="flex shrink-0 flex-col gap-1">
-        <h1 class="text-2xl font-semibold text-neutral-900">
-          {{ t("listsTitle") }}
-        </h1>
-        <p class="text-sm text-neutral-500">{{ t("listsSubtitle") }}</p>
+      <div class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div class="flex flex-col gap-1">
+          <h1 class="text-2xl font-semibold text-neutral-900">
+            {{ t("listsTitle") }}
+          </h1>
+          <p class="text-sm text-neutral-500">{{ t("listsSubtitle") }}</p>
+        </div>
+        <Button
+          v-if="canCreateLists"
+          type="button"
+          class="h-11 w-full shrink-0 sm:w-auto"
+          @click="showCreate = true"
+        >
+          <Plus class="h-4 w-4" />
+          {{ t("createNewList") }}
+        </Button>
       </div>
 
       <div class="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -295,32 +332,6 @@ onMounted(async () => {
           </CardContent>
         </Card>
       </div>
-
-      <Card v-if="canCreateLists" class="shrink-0">
-        <CardHeader>
-          <CardTitle>{{ t("createNewList") }}</CardTitle>
-          <CardDescription>{{ t("newListName") }}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            class="flex flex-col gap-3 sm:flex-row sm:items-end"
-            @submit.prevent="createList"
-          >
-            <div class="w-full space-y-2 sm:flex-1">
-              <Label for="new-list">{{ t("newListName") }}</Label>
-              <Input
-                id="new-list"
-                v-model="newListName"
-                :placeholder="t('newListName')"
-              />
-            </div>
-            <Button type="submit" :loading="loading" class="h-11 shrink-0">
-              <Plus class="h-4 w-4" />
-              {{ t("createNewList") }}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
 
       <div class="flex min-h-0 flex-1 flex-col gap-3">
         <div class="shrink-0 rounded-xl border border-neutral-200 bg-white p-4">
@@ -615,6 +626,52 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <Dialog
+      :open="showCreate"
+      :title="t('createNewList')"
+      class="max-w-md"
+      actions-class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2"
+      @update:open="(open) => !open && closeCreate()"
+    >
+      <form id="create-list" @submit.prevent="createList">
+        <Field :invalid="!!nameError">
+          <FieldLabel for="new-list">{{ t("newListName") }}</FieldLabel>
+          <Input
+            id="new-list"
+            ref="nameInput"
+            v-model="newListName"
+            :placeholder="t('newListName')"
+            :disabled="creating"
+            :aria-invalid="nameError ? true : undefined"
+            :aria-describedby="nameError ? 'new-list-error' : undefined"
+            @update:model-value="nameError = ''"
+          />
+          <FieldDescription v-if="nameError" id="new-list-error" role="alert">
+            {{ nameError }}
+          </FieldDescription>
+        </Field>
+      </form>
+      <template #actions>
+        <Button
+          type="button"
+          variant="outline"
+          class="h-11 w-full"
+          :disabled="creating"
+          @click="closeCreate"
+        >
+          {{ t("cancel") }}
+        </Button>
+        <Button
+          type="submit"
+          form="create-list"
+          class="h-11 w-full"
+          :loading="creating"
+        >
+          {{ t("createNewList") }}
+        </Button>
+      </template>
+    </Dialog>
 
     <ConfirmDialog
       :open="showDeleteModal"
