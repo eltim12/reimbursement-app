@@ -308,7 +308,7 @@ onMounted(async () => {
   <AppShell>
     <div class="space-y-5">
       <div class="flex flex-col gap-1">
-        <h1 class="text-2xl font-semibold text-neutral-900">
+        <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">
           {{ t("analyticsTitle") }}
         </h1>
         <p class="text-sm text-neutral-500">{{ t("analyticsSubtitle") }}</p>
@@ -494,7 +494,7 @@ onMounted(async () => {
                     ? 'bg-white text-neutral-900 shadow-sm'
                     : 'text-neutral-500 hover:text-neutral-800'
                 "
-                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors"
+                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-[transform,background-color,color,box-shadow] duration-150 ease-out active:scale-[0.97]"
                 @click="categoryView = 'bars'"
               >
                 <List class="h-4 w-4" />
@@ -509,7 +509,7 @@ onMounted(async () => {
                     ? 'bg-white text-neutral-900 shadow-sm'
                     : 'text-neutral-500 hover:text-neutral-800'
                 "
-                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors"
+                class="inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-[transform,background-color,color,box-shadow] duration-150 ease-out active:scale-[0.97]"
                 @click="categoryView = 'pie'"
               >
                 <PieChart class="h-4 w-4" />
@@ -575,7 +575,7 @@ onMounted(async () => {
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 hover:text-neutral-900"
+                      class="inline-flex items-center gap-1 transition-[transform,color] duration-150 ease-out hover:text-neutral-900 active:scale-[0.97]"
                       @click="toggleSort('date')"
                     >
                       {{ t("date") }}
@@ -585,7 +585,7 @@ onMounted(async () => {
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 hover:text-neutral-900"
+                      class="inline-flex items-center gap-1 transition-[transform,color] duration-150 ease-out hover:text-neutral-900 active:scale-[0.97]"
                       @click="toggleSort('category')"
                     >
                       {{ t("category") }}
@@ -601,7 +601,7 @@ onMounted(async () => {
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 hover:text-neutral-900"
+                      class="inline-flex items-center gap-1 transition-[transform,color] duration-150 ease-out hover:text-neutral-900 active:scale-[0.97]"
                       @click="toggleSort('amount')"
                     >
                       {{ t("amount") }}
@@ -640,7 +640,7 @@ onMounted(async () => {
                 <tr
                   v-for="entry in sortedEntries"
                   :key="entry.id"
-                  class="cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50"
+                  class="cursor-pointer border-b border-neutral-100 last:border-0 transition-[transform,background-color] duration-150 ease-out hover:bg-neutral-50 active:scale-[0.99] active:bg-neutral-50"
                   @click="router.push(`/lists/${entry.listId}`)"
                 >
                   <td class="whitespace-nowrap px-4 py-3 font-mono">

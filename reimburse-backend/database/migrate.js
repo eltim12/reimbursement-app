@@ -518,6 +518,11 @@ async function migrate(existingDb = null) {
       console.log("✓ users.auth_user_id");
     }
 
+    if (!(await columnExists(db, "users", "platform_user_id"))) {
+      await db.query(require("../platform-link").PLATFORM_USER_ID_COLUMN_SQL);
+      console.log("✓ users.platform_user_id");
+    }
+
     if (!(await columnExists(db, "lists", "company_id"))) {
       await db.query(
         "ALTER TABLE lists ADD COLUMN company_id INT NULL AFTER user_id",

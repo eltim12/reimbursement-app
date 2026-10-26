@@ -148,7 +148,13 @@ function biCell(zh, en, opts = {}) {
 }
 
 // Single bilingual PDF export (Chinese + English)
-export async function exportPDF(listName, entries, total, userName = "") {
+export async function exportPDF(
+  listName,
+  entries,
+  total,
+  userName = "",
+  listId = "",
+) {
   try {
     const pdfMake = getPdfMake();
 
@@ -244,7 +250,9 @@ export async function exportPDF(listName, entries, total, userName = "") {
             {
               stack: [
                 {
-                  text: listName || "未命名 / Tidak Bernama",
+                  text: listId
+                    ? `#${listId}  ${listName || "未命名 / Tidak Bernama"}`
+                    : listName || "未命名 / Tidak Bernama",
                   fontSize: 10,
                   color: "#00bcd4",
                   bold: true,
@@ -319,7 +327,10 @@ export async function exportPDF(listName, entries, total, userName = "") {
       },
     };
 
-    await deliverPdf(pdfMake, docDefinition, listName || "Reimbursement");
+    const fileLabel = listId
+      ? `${listId}_${listName || "Reimbursement"}`
+      : listName || "Reimbursement";
+    await deliverPdf(pdfMake, docDefinition, fileLabel);
     return true;
   } catch (error) {
     console.error("PDF generation error:", error);

@@ -638,6 +638,7 @@ const executeExport = async (userName) => {
       entries.value,
       total.value,
       userName,
+      currentListId.value,
     );
     showToast(t("pdfExported"), "success");
   } catch {
@@ -654,6 +655,7 @@ const handleExportExcel = async () => {
     await exportExcel(currentListName.value, entries.value, {
       userName: listOwnerName.value || user.name || "",
       userEmail: listOwnerEmail.value || user.email || "",
+      listId: currentListId.value,
     });
     showToast(t("excelExported"), "success");
   } catch (error) {
@@ -683,14 +685,14 @@ onMounted(async () => {
         <div class="space-y-2">
           <button
             type="button"
-            class="inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-900"
+            class="inline-flex items-center gap-1 text-sm text-neutral-500 transition-[transform,color] duration-150 ease-out hover:text-neutral-900 active:scale-[0.97]"
             @click="router.push('/')"
           >
             <ArrowLeft class="h-4 w-4" />
             {{ t("backToLists") }}
           </button>
           <div>
-            <h1 class="text-2xl font-semibold text-neutral-900">
+            <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">
               {{ currentListName || "—" }}
             </h1>
             <p class="font-mono text-sm text-neutral-500">
@@ -787,7 +789,7 @@ onMounted(async () => {
                 <button
                   v-if="getProofUrl(entry.Proof)"
                   type="button"
-                  class="shrink-0"
+                  class="shrink-0 transition-transform duration-150 ease-out active:scale-[0.99]"
                   @click="openProofPreview(entry.Proof)"
                 >
                   <img
@@ -889,7 +891,7 @@ onMounted(async () => {
                     <button
                       v-if="getProofUrl(entry.Proof)"
                       type="button"
-                      class="block"
+                      class="block transition-transform duration-150 ease-out active:scale-[0.99]"
                       @click="openProofPreview(entry.Proof)"
                     >
                       <img
@@ -973,6 +975,7 @@ onMounted(async () => {
               :search-placeholder="t('searchCategory')"
               :empty-text="t('noCategoryResults')"
               :invalid="!!entryErrors.category"
+              show-clear
               @update:model-value="
                 (v) => {
                   entryForm.category = v;
@@ -994,18 +997,35 @@ onMounted(async () => {
                 >({{ t("notePlaceholder") }})</span
               >
             </FieldLabel>
-            <Input
-              id="note"
-              :model-value="entryForm.note"
-              :placeholder="t('notePlaceholder')"
-              :aria-invalid="!!entryErrors.note"
-              @update:model-value="
-                (v) => {
-                  entryForm.note = v;
-                  clearEntryError('note');
-                }
-              "
-            />
+            <div class="relative">
+              <Input
+                id="note"
+                class="pr-10"
+                :model-value="entryForm.note"
+                :placeholder="t('notePlaceholder')"
+                :aria-invalid="!!entryErrors.note"
+                @update:model-value="
+                  (v) => {
+                    entryForm.note = v;
+                    clearEntryError('note');
+                  }
+                "
+              />
+              <button
+                v-if="entryForm.note"
+                type="button"
+                class="absolute top-1/2 right-2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                :aria-label="t('clear')"
+                @click="
+                  () => {
+                    entryForm.note = '';
+                    clearEntryError('note');
+                  }
+                "
+              >
+                <X class="size-3.5" />
+              </button>
+            </div>
             <FieldDescription v-if="entryErrors.note?.trim()">
               {{ entryErrors.note }}
             </FieldDescription>
@@ -1171,7 +1191,7 @@ onMounted(async () => {
       >
         <button
           type="button"
-          class="absolute top-4 right-4 rounded-lg bg-white/90 p-2 text-neutral-900 hover:bg-white"
+          class="absolute top-4 right-4 rounded-lg bg-white/90 p-2 text-neutral-900 transition-[transform,background-color] duration-150 ease-out hover:bg-white active:scale-[0.97]"
           @click="previewImageUrl = null"
         >
           <X class="h-5 w-5" />

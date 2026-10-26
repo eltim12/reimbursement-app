@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { Check, ChevronsUpDown, Search } from "@lucide/vue";
+import { Check, ChevronsUpDown, Search, X } from "@lucide/vue";
 import { cn } from "@/lib/utils";
 
 const props = defineProps({
@@ -26,15 +26,20 @@ const props = defineProps({
     default: "No results",
   },
   invalid: Boolean,
+  showClear: Boolean,
+  /** When true, parent owns filtering (server search); emit `search` on query change. */
+  remote: Boolean,
+  loading: Boolean,
 });
 
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "search"]);
 
 const open = ref(false);
 const query = ref("");
 const rootEl = ref(null);
 const searchEl = ref(null);
 const panelStyle = ref({});
+let searchTimer = null;
 
 const selectedLabel = computed(() => {
   const match = props.items.find((item) => item.value === props.modelValue);
@@ -42,6 +47,7 @@ const selectedLabel = computed(() => {
 });
 
 const filteredItems = computed(() => {
+  if (props.remote) return props.items;
   const q = query.value.trim().toLowerCase();
   if (!q) return props.items;
   return props.items.filter((item) => {
@@ -51,6 +57,18 @@ const filteredItems = computed(() => {
       .toLowerCase();
     return hay.includes(q);
   });
+});
+
+const emitSearch = (value) => {
+  if (!props.remote) return;
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    emit("search", String(value || "").trim());
+  }, 250);
+};
+
+watch(query, (value) => {
+  emitSearch(value);
 });
 
 const updatePosition = () => {
@@ -71,6 +89,7 @@ const setOpen = async (value) => {
   if (value) {
     query.value = "";
     updatePosition();
+    if (props.remote) emit("search", "");
     await nextTick();
     searchEl.value?.focus();
   }
@@ -78,6 +97,15 @@ const setOpen = async (value) => {
 
 const selectItem = (value) => {
   emit("update:modelValue", value);
+  open.value = false;
+  query.value = "";
+};
+
+const clearValue = (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (props.disabled) return;
+  emit("update:modelValue", null);
   open.value = false;
   query.value = "";
 };
@@ -112,6 +140,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer);
   document.removeEventListener("click", onDocClick);
   document.removeEventListener("keydown", onKeydown);
   window.removeEventListener("scroll", onScroll, true);
@@ -138,7 +167,19 @@ onUnmounted(() => {
       @click="setOpen(!open)"
     >
       <span class="truncate">{{ selectedLabel || placeholder }}</span>
-      <ChevronsUpDown class="h-4 w-4 shrink-0 text-neutral-400" />
+      <span class="flex shrink-0 items-center gap-1">
+        <button
+          v-if="showClear && modelValue != null && modelValue !== ''"
+          type="button"
+          class="inline-flex size-6 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+          :aria-label="placeholder"
+          :disabled="disabled"
+          @click="clearValue"
+        >
+          <X class="size-3.5" />
+        </button>
+        <ChevronsUpDown class="h-4 w-4 text-neutral-400" />
+      </span>
     </button>
 
     <Teleport to="body">
@@ -181,7 +222,7 @@ onUnmounted(() => {
             v-if="filteredItems.length === 0"
             class="px-3 py-6 text-center text-sm text-neutral-500"
           >
-            {{ emptyText }}
+            {{ loading ? "…" : emptyText }}
           </div>
         </div>
       </div>

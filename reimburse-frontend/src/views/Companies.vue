@@ -226,7 +226,7 @@ onMounted(() => {
     <div class="mx-auto max-w-5xl space-y-6 p-4 md:p-6">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 class="text-xl font-semibold tracking-tight">
+          <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">
             {{ t("companiesTitle") }}
           </h1>
           <p class="text-sm text-neutral-500">{{ t("companiesSubtitle") }}</p>

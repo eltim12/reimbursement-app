@@ -12,7 +12,7 @@ onMounted(() => {
   <div
     class="flex min-h-screen flex-col items-center justify-center gap-3 bg-neutral-50 p-4 text-sm text-neutral-500"
   >
-    <Spinner class="size-6 text-neutral-400" />
+    <Spinner :size="64" state="connecting" />
     <p>Mengalihkan ke portal aplikasi…</p>
   </div>
 </template>

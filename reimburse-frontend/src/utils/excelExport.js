@@ -18,7 +18,7 @@ function sanitizeFileName(name) {
 export async function exportExcel(
   listName,
   entries,
-  { userName = "", userEmail = "" } = {},
+  { userName = "", userEmail = "", listId = "" } = {},
 ) {
   const XLSX = await import("xlsx");
 
@@ -74,8 +74,11 @@ export async function exportExcel(
     "金额显示 / Jumlah (Formatted)",
   ];
 
-  const title = listName
-    ? `报销汇总 / Ringkasan Reimbursement - ${listName}`
+  const titledName = listId
+    ? `#${listId}  ${listName || ""}`.trim()
+    : listName;
+  const title = titledName
+    ? `报销汇总 / Ringkasan Reimbursement - ${titledName}`
     : "报销汇总 / Ringkasan Reimbursement";
 
   const metaRows = [
@@ -133,7 +136,9 @@ export async function exportExcel(
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Entries");
 
-  const fileName = `${sanitizeFileName(listName || "Reimbursement")}.xlsx`;
+  const fileName = `${sanitizeFileName(
+    listId ? `${listId}_${listName || "Reimbursement"}` : listName || "Reimbursement",
+  )}.xlsx`;
   XLSX.writeFile(workbook, fileName);
 }
 

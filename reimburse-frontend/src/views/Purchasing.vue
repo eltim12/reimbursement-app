@@ -82,7 +82,26 @@ const saving = ref(false);
 const deleting = ref(false);
 const orders = ref([]);
 const colleagues = ref([]);
+const colleaguesLoading = ref(false);
 const companyFilter = ref("");
+
+/** Stable Combobox value for a platform user / self row. */
+function colleagueValue(u) {
+  if (!u) return "";
+  if (u.isSelf) return `self:${u.email || u.id}`;
+  if (u.email) return String(u.email).toLowerCase();
+  if (u.employeeCode) return `code:${u.employeeCode}`;
+  return String(u.id);
+}
+
+function colleagueLabel(u) {
+  const name = u.name || u.email || u.employeeCode || "—";
+  const bits = [u.employeeCode, u.email, u.departmentName].filter(Boolean);
+  if (u.isSelf) {
+    return `${name} (${t("requestorMyself")})`;
+  }
+  return bits.length ? `${name} · ${bits.join(" · ")}` : name;
+}
 
 const filters = ref({
   search: "",
@@ -103,6 +122,25 @@ const showDeleteModal = ref(false);
 const showFilterModal = ref(false);
 const editingId = ref(null);
 const detailItem = ref(null);
+const detailReceipts = computed(() => {
+  const order = detailItem.value;
+  if (!order) return [];
+  const items = (order.items || []).filter(
+    (item) => item.received_note || item.received_proof_image,
+  );
+  if (items.length) return items;
+  if (order.received_note || order.received_proof_image) {
+    return [
+      {
+        id: "order",
+        item_name: "",
+        received_note: order.received_note,
+        received_proof_image: order.received_proof_image,
+      },
+    ];
+  }
+  return [];
+});
 const pendingDelete = ref(null);
 const formMode = ref("create");
 const translating = ref(false);
@@ -149,6 +187,10 @@ const activeFilterCount = computed(() => {
   return n;
 });
 
+const listFiltersActive = computed(
+  () => activeFilterCount.value > 0 || Boolean(filters.value.search.trim()),
+);
+
 const categoryItems = computed(() => [
   { value: "office", label: t("purchasingCatOffice") },
   { value: "production", label: t("purchasingCatProduction") },
@@ -188,13 +230,17 @@ const filterStatusItems = computed(() => [
   ...statusItems.value,
 ]);
 
-const colleagueItems = computed(() => [
-  { value: "", label: t("requestorMyself") },
-  ...colleagues.value.map((u) => ({
-    value: String(u.id),
-    label: u.name ? `${u.name} (${u.email})` : u.email,
-  })),
-]);
+const colleagueItems = computed(() => {
+  const seen = new Set([""]);
+  const items = [{ value: "", label: t("requestorMyself") }];
+  for (const u of colleagues.value) {
+    const value = colleagueValue(u);
+    if (seen.has(value)) continue;
+    seen.add(value);
+    items.push({ value, label: colleagueLabel(u) });
+  }
+  return items;
+});
 
 const filterRequestorItems = computed(() => {
   const map = new Map();
@@ -326,11 +372,11 @@ const itemsPreview = (order) => {
 const urgencyBadgeClass = (urgency) => {
   switch (urgency) {
     case "high":
-      return "border-transparent bg-red-100 text-red-800";
+      return "border-transparent bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300";
     case "medium":
-      return "border-transparent bg-amber-100 text-amber-800";
+      return "border-transparent bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300";
     case "low":
-      return "border-transparent bg-emerald-100 text-emerald-800";
+      return "border-transparent bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300";
     default:
       return "border-transparent bg-neutral-100 text-neutral-700";
   }
@@ -339,17 +385,17 @@ const urgencyBadgeClass = (urgency) => {
 const statusBadgeClass = (status) => {
   switch (status) {
     case "pending":
-      return "border-transparent bg-neutral-100 text-neutral-700";
+      return "border-transparent bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300";
     case "approved":
-      return "border-transparent bg-sky-100 text-sky-800";
+      return "border-transparent bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300";
     case "ordered":
-      return "border-transparent bg-violet-100 text-violet-800";
+      return "border-transparent bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300";
     case "received":
-      return "border-transparent bg-emerald-100 text-emerald-800";
+      return "border-transparent bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
     case "rejected":
-      return "border-transparent bg-red-100 text-red-800";
+      return "border-transparent bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300";
     case "partial":
-      return "border-transparent bg-amber-100 text-amber-900";
+      return "border-transparent bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300";
     default:
       return "border-transparent bg-neutral-100 text-neutral-700";
   }
@@ -435,18 +481,34 @@ const syncUserFlags = async () => {
   }
 };
 
-const loadColleagues = async () => {
+const loadColleagues = async (search = "") => {
   try {
+    colleaguesLoading.value = true;
     const params = {};
     if (isSuperadmin.value && companyFilter.value) {
       params.companyId = companyFilter.value;
     }
+    if (search) params.search = search;
     const response = await api.getPurchasingColleagues(params);
     if (response.success) {
-      colleagues.value = response.colleagues || [];
+      const next = response.colleagues || [];
+      // Keep the currently selected pemohon visible while searching.
+      const selectedKey = form.value.requestor_id;
+      if (selectedKey) {
+        const stillThere = next.some((u) => colleagueValue(u) === selectedKey);
+        if (!stillThere) {
+          const prev = colleagues.value.find(
+            (u) => colleagueValue(u) === selectedKey,
+          );
+          if (prev) next.unshift(prev);
+        }
+      }
+      colleagues.value = next;
     }
   } catch {
     colleagues.value = [];
+  } finally {
+    colleaguesLoading.value = false;
   }
 };
 
@@ -527,12 +589,34 @@ const openEdit = async (row) => {
   }
   formMode.value = "edit";
   editingId.value = row.id;
-  await loadColleagues();
+  await loadColleagues(
+    row.requestor_name || row.requestor_email || "",
+  );
+  const isSelf = row.requestor_id === currentUser.value.id;
+  let requestorKey = "";
+  if (!isSelf) {
+    requestorKey = row.requestor_email
+      ? String(row.requestor_email).toLowerCase()
+      : `local:${row.requestor_id}`;
+    const known = colleagues.value.some(
+      (u) => colleagueValue(u) === requestorKey,
+    );
+    if (!known) {
+      colleagues.value = [
+        {
+          id: `local:${row.requestor_id}`,
+          employeeCode: "",
+          name: row.requestor_name || "",
+          email: row.requestor_email || "",
+          departmentName: null,
+          isSelf: false,
+        },
+        ...colleagues.value,
+      ];
+    }
+  }
   form.value = {
-    requestor_id:
-      row.requestor_id === currentUser.value.id
-        ? ""
-        : String(row.requestor_id || ""),
+    requestor_id: requestorKey,
     urgency: row.urgency,
     status: row.status,
     note: row.note || "",
@@ -813,10 +897,32 @@ const save = async () => {
       urgency: form.value.urgency,
       note: orderNote,
       items: payloadItems,
-      requestor_id: form.value.requestor_id
-        ? Number(form.value.requestor_id)
-        : currentUser.value.id,
     };
+
+    const requestorKey = form.value.requestor_id;
+    if (!requestorKey || String(requestorKey).startsWith("self:")) {
+      payload.requestor_id = currentUser.value.id;
+    } else if (String(requestorKey).startsWith("local:")) {
+      payload.requestor_id = Number(String(requestorKey).slice(6));
+    } else {
+      const picked = colleagues.value.find(
+        (u) => colleagueValue(u) === requestorKey,
+      );
+      if (picked) {
+        payload.requestor_email = picked.email || undefined;
+        payload.requestor_name = picked.name || undefined;
+        payload.requestor_employee_code = picked.employeeCode || undefined;
+        // Fallback when HR row has neither email nor code
+        if (!payload.requestor_email && !payload.requestor_employee_code) {
+          payload.requestor_name = picked.name || requestorKey;
+          payload.requestor_employee_code = String(picked.id);
+        }
+      } else if (requestorKey.includes("@")) {
+        payload.requestor_email = requestorKey;
+      } else {
+        payload.requestor_id = currentUser.value.id;
+      }
+    }
 
     if (isSuperadmin.value && companyFilter.value && formMode.value === "create") {
       payload.company_id = Number(companyFilter.value);
@@ -917,8 +1023,20 @@ onMounted(async () => {
         </Button>
       </div>
 
-      <Card>
-        <div class="flex flex-col gap-3 border-b border-neutral-100 p-4 sm:flex-row sm:items-center">
+      <div class="space-y-3 rounded-xl border border-neutral-200 bg-white p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-sm font-medium text-neutral-900">{{ t("searchPurchasing") }}</p>
+          <Button
+            v-if="listFiltersActive"
+            type="button"
+            size="sm"
+            variant="ghost"
+            @click="resetFilters"
+          >
+            {{ t("clearFilters") }}
+          </Button>
+        </div>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div class="relative min-w-0 flex-1">
             <Search
               class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
@@ -931,7 +1049,7 @@ onMounted(async () => {
           </div>
           <Button
             variant="outline"
-            class="h-11 gap-2"
+            class="h-11 shrink-0 gap-2"
             @click="showFilterModal = true"
           >
             <ListFilter class="h-4 w-4" />
@@ -944,7 +1062,104 @@ onMounted(async () => {
             </Badge>
           </Button>
         </div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div v-if="isSuperadmin" class="space-y-2">
+            <Label>{{ t("filterCompany") }}</Label>
+            <Combobox
+              :model-value="companyFilter"
+              :items="companyFilterItems"
+              :placeholder="t('filterAllCompanies')"
+              @update:model-value="
+                async (v) => {
+                  companyFilter = v || '';
+                  await loadColleagues();
+                  await load();
+                }
+              "
+            />
+          </div>
+          <div class="space-y-2">
+            <Label>{{ t("filterCategory") }}</Label>
+            <Select
+              :model-value="filters.category"
+              :items="filterCategoryItems"
+              @update:model-value="
+                (v) => {
+                  filters.category = v;
+                  load();
+                }
+              "
+            >
+              <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="item in filterCategoryItems"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="space-y-2">
+            <Label>{{ t("filterUrgency") }}</Label>
+            <Select
+              :model-value="filters.urgency"
+              :items="filterUrgencyItems"
+              @update:model-value="
+                (v) => {
+                  filters.urgency = v;
+                  load();
+                }
+              "
+            >
+              <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="item in filterUrgencyItems"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="space-y-2">
+            <Label>{{ t("filterStatus") }}</Label>
+            <Select
+              :model-value="filters.status"
+              :items="filterStatusItems"
+              @update:model-value="
+                (v) => {
+                  filters.status = v;
+                  load();
+                }
+              "
+            >
+              <SelectTrigger class="h-11"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="item in filterStatusItems"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
 
+      <Card>
         <!-- Mobile: card list -->
         <div class="space-y-3 p-3 md:hidden">
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
@@ -953,13 +1168,13 @@ onMounted(async () => {
             class="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-10 text-center text-sm text-neutral-500"
           >
             <ShoppingCart class="mx-auto mb-2 h-8 w-8 text-neutral-300" />
-            {{ t("noPurchasing") }}
+            {{ listFiltersActive ? t("noPurchasingFiltered") : t("noPurchasing") }}
           </div>
           <template v-else>
             <div
               v-for="row in sortedRows"
               :key="row.id"
-              class="flex w-full flex-col gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-colors active:bg-neutral-50"
+              class="flex w-full flex-col gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-[transform,background-color] duration-150 ease-out active:scale-[0.99] active:bg-neutral-50"
               role="button"
               tabindex="0"
               @click="openDetail(row)"
@@ -1019,6 +1234,7 @@ onMounted(async () => {
                   variant="ghost"
                   size="icon"
                   class="h-9 w-9"
+                  :aria-label="t('editPurchasing')"
                   @click="openEdit(row)"
                 >
                   <Pencil class="h-4 w-4" />
@@ -1027,6 +1243,7 @@ onMounted(async () => {
                   variant="ghost"
                   size="icon"
                   class="h-9 w-9 text-red-600 hover:text-red-700"
+                  :aria-label="t('delete')"
                   @click="askDelete(row)"
                 >
                   <Trash2 class="h-4 w-4" />
@@ -1123,7 +1340,7 @@ onMounted(async () => {
               <tr v-else-if="sortedRows.length === 0">
                 <td colspan="8" class="px-4 py-12 text-center text-neutral-500">
                   <ShoppingCart class="mx-auto mb-2 h-8 w-8 text-neutral-300" />
-                  {{ t("noPurchasing") }}
+                  {{ listFiltersActive ? t("noPurchasingFiltered") : t("noPurchasing") }}
                 </td>
               </tr>
               <tr
@@ -1170,6 +1387,7 @@ onMounted(async () => {
                       variant="ghost"
                       size="icon"
                       class="h-9 w-9"
+                      :aria-label="t('viewDetail')"
                       @click="openDetail(row)"
                     >
                       <Eye class="h-4 w-4" />
@@ -1179,6 +1397,7 @@ onMounted(async () => {
                       variant="ghost"
                       size="icon"
                       class="h-9 w-9"
+                      :aria-label="t('editPurchasing')"
                       @click="openEdit(row)"
                     >
                       <Pencil class="h-4 w-4" />
@@ -1188,6 +1407,7 @@ onMounted(async () => {
                       variant="ghost"
                       size="icon"
                       class="h-9 w-9 text-red-600 hover:text-red-700"
+                      :aria-label="t('delete')"
                       @click="askDelete(row)"
                     >
                       <Trash2 class="h-4 w-4" />
@@ -1338,7 +1558,10 @@ onMounted(async () => {
             :placeholder="t('selectRequestor')"
             :search-placeholder="t('searchRequestor')"
             :empty-text="t('noRequestorResults')"
+            remote
+            :loading="colleaguesLoading"
             @update:model-value="(v) => (form.requestor_id = v ?? '')"
+            @search="(q) => loadColleagues(q)"
           />
           <p class="text-xs text-neutral-500">{{ t("requestorHint") }}</p>
         </div>
@@ -1634,18 +1857,36 @@ onMounted(async () => {
                     </Badge>
                   </td>
                   <td class="px-3 py-2.5">
-                    <button
-                      v-if="getImageUrl(item.picture)"
-                      type="button"
-                      @click="openImagePreview(item.picture)"
-                    >
-                      <img
-                        :src="getImageUrl(item.picture)"
-                        alt=""
-                        class="h-10 w-10 rounded-md object-cover"
-                      />
-                    </button>
-                    <span v-else class="text-neutral-400">—</span>
+                    <div class="flex gap-2">
+                      <button
+                        v-if="getImageUrl(item.picture)"
+                        type="button"
+                        :aria-label="t('purchasingPicture')"
+                        @click="openImagePreview(item.picture)"
+                      >
+                        <img
+                          :src="getImageUrl(item.picture)"
+                          :alt="t('purchasingPicture')"
+                          class="h-10 w-10 rounded-md object-cover"
+                        />
+                      </button>
+                      <button
+                        v-if="getImageUrl(item.received_proof_image)"
+                        type="button"
+                        :aria-label="t('receivedProof')"
+                        @click="openImagePreview(item.received_proof_image)"
+                      >
+                        <img
+                          :src="getImageUrl(item.received_proof_image)"
+                          :alt="t('receivedProof')"
+                          class="h-10 w-10 rounded-md object-cover"
+                        />
+                      </button>
+                      <span
+                        v-if="!getImageUrl(item.picture) && !getImageUrl(item.received_proof_image)"
+                        class="text-neutral-400"
+                      >—</span>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -1654,30 +1895,39 @@ onMounted(async () => {
         </div>
 
         <div
-          v-if="
-            detailItem.status === 'received' &&
-            (detailItem.received_note ||
-              getImageUrl(detailItem.received_proof_image))
-          "
-          class="space-y-2 rounded-xl border border-neutral-200 p-4"
+          v-if="detailReceipts.length"
+          class="space-y-3 rounded-xl border border-neutral-200 p-4"
         >
           <div class="text-sm font-medium text-neutral-900">
             {{ t("receivedNote") }}
           </div>
-          <div class="text-neutral-700">
-            {{ detailItem.received_note || "—" }}
-          </div>
-          <button
-            v-if="getImageUrl(detailItem.received_proof_image)"
-            type="button"
-            @click="openImagePreview(detailItem.received_proof_image)"
+          <div
+            v-for="item in detailReceipts"
+            :key="item.id"
+            class="flex items-start gap-3"
           >
-            <img
-              :src="getImageUrl(detailItem.received_proof_image)"
-              alt=""
-              class="h-24 rounded-lg object-cover"
-            />
-          </button>
+            <div class="min-w-0 flex-1">
+              <div v-if="item.item_name" class="text-sm font-medium text-neutral-900">
+                {{ displayLocalized(item.item_name) }}
+              </div>
+              <div class="text-sm text-neutral-700">
+                {{ item.received_note || "—" }}
+              </div>
+            </div>
+            <button
+              v-if="getImageUrl(item.received_proof_image)"
+              type="button"
+              class="shrink-0"
+              :aria-label="t('receivedProof')"
+              @click="openImagePreview(item.received_proof_image)"
+            >
+              <img
+                :src="getImageUrl(item.received_proof_image)"
+                :alt="t('receivedProof')"
+                class="h-24 w-24 rounded-lg object-cover"
+              />
+            </button>
+          </div>
         </div>
       </div>
 

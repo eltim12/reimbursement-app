@@ -63,7 +63,7 @@ const canDeleteList = (list) => {
   return Number(list?.userId) === Number(currentUser.value.id);
 };
 const listTableColspan = computed(() => {
-  let cols = 2; // name + createdAt
+  let cols = 3; // id + name + createdAt
   if (canViewAllLists.value) cols += 1;
   if (isSuperadmin.value) cols += 1;
   if (canDeleteLists.value) cols += 1;
@@ -84,6 +84,7 @@ const filteredLists = computed(() => {
   if (!q) return lists.value;
   return lists.value.filter((list) => {
     const haystack = [
+      list.id,
       list.name,
       list.ownerName,
       list.ownerEmail,
@@ -242,45 +243,65 @@ onMounted(async () => {
       </Card>
 
       <div class="space-y-3">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
-            <Label>{{ t("filterCompany") }}</Label>
-            <Select
-              :model-value="companyFilter"
-              :items="companyFilterItems"
-              :placeholder="t('filterAllCompanies')"
-              @update:model-value="
-                async (v) => {
-                  companyFilter = v ?? '';
+        <div class="rounded-xl border border-neutral-200 bg-white p-4">
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p class="text-sm font-medium text-neutral-900">{{ t("searchLists") }}</p>
+            <Button
+              v-if="search || companyFilter"
+              type="button"
+              size="sm"
+              variant="ghost"
+              @click="
+                async () => {
+                  search = '';
+                  companyFilter = '';
                   await loadLists();
                 }
               "
             >
-              <SelectTrigger class="h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem
-                    v-for="item in companyFilterItems"
-                    :key="item.value || 'all-companies'"
-                    :value="item.value"
-                  >
-                    {{ item.label }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+              {{ t("clearFilters") }}
+            </Button>
           </div>
-          <div class="relative w-full max-w-md">
-            <Search
-              class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
-            />
-            <Input
-              v-model="search"
-              class="h-11 pl-9"
-              :placeholder="t('searchLists')"
-            />
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
+              <Label>{{ t("filterCompany") }}</Label>
+              <Select
+                :model-value="companyFilter"
+                :items="companyFilterItems"
+                :placeholder="t('filterAllCompanies')"
+                @update:model-value="
+                  async (v) => {
+                    companyFilter = v ?? '';
+                    await loadLists();
+                  }
+                "
+              >
+                <SelectTrigger class="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="item in companyFilterItems"
+                      :key="item.value || 'all-companies'"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="relative w-full max-w-md">
+              <Search
+                class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-neutral-400"
+              />
+              <Input
+                v-model="search"
+                class="h-11 pl-9"
+                :placeholder="t('searchLists')"
+              />
+            </div>
           </div>
         </div>
 
@@ -291,19 +312,22 @@ onMounted(async () => {
             v-else-if="filteredLists.length === 0"
             class="rounded-xl border border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500"
           >
-            {{ t("noLists") }}
+            {{ search || companyFilter ? t("noListsFiltered") : t("noLists") }}
           </div>
           <template v-else>
             <div
               v-for="list in filteredLists"
               :key="list.id"
-              class="flex w-full items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-colors active:bg-neutral-50"
+              class="flex w-full items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-[transform,background-color] duration-150 ease-out active:scale-[0.99] active:bg-neutral-50"
               role="button"
               tabindex="0"
               @click="openList(list.id)"
               @keydown.enter.prevent="openList(list.id)"
             >
               <div class="min-w-0 flex-1 space-y-1.5">
+                <p class="font-mono text-xs text-neutral-500">
+                  #{{ list.id }}
+                </p>
                 <p class="truncate font-medium text-neutral-900">
                   {{ list.name }}
                 </p>
@@ -361,6 +385,9 @@ onMounted(async () => {
               <thead class="border-b border-neutral-200 bg-neutral-50">
                 <tr class="text-left">
                   <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
+                    {{ t("listId") }}
+                  </th>
+                  <th class="whitespace-nowrap px-4 py-3 font-medium text-neutral-500">
                     {{ t("newListName") }}
                   </th>
                   <th
@@ -392,7 +419,7 @@ onMounted(async () => {
                     :colspan="listTableColspan"
                     class="px-4 py-8 text-center text-neutral-500"
                   >
-                    {{ t("noLists") }}
+                    {{ search || companyFilter ? t("noListsFiltered") : t("noLists") }}
                   </td>
                 </tr>
                 <tr
@@ -401,6 +428,9 @@ onMounted(async () => {
                   class="cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50"
                   @click="openList(list.id)"
                 >
+                  <td class="whitespace-nowrap px-4 py-3 font-mono text-neutral-600">
+                    #{{ list.id }}
+                  </td>
                   <td class="whitespace-nowrap px-4 py-3 font-medium text-neutral-900">
                     {{ list.name }}
                   </td>

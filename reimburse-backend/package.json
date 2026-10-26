@@ -10,7 +10,8 @@
     "db:seed": "node database/seed.js",
     "db:setup": "node database/setup.js",
     "init-db": "node database/init.js",
-    "verify-db": "node database/verify.js"
+    "verify-db": "node database/verify.js",
+    "test": "node --test platform-link.test.js"
   },
   "keywords": [
     "reimbursement",

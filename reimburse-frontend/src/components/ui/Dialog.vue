@@ -25,16 +25,17 @@ defineEmits(["update:open"]);
       class="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
       <div
-        class="absolute inset-0 bg-black/40"
+        class="absolute inset-0 bg-black/40 transition-opacity duration-150"
         @click="$emit('update:open', false)"
       />
       <div
         :class="
           cn(
-            'relative z-10 flex max-h-[90vh] w-full max-w-sm flex-col rounded-xl border border-neutral-200 bg-white shadow-lg',
+            'relative z-10 flex max-h-[90vh] w-full max-w-sm origin-center flex-col rounded-xl border border-neutral-200 bg-white shadow-lg transition-[transform,opacity] duration-150 ease-out',
             $props.class,
           )
         "
+        style="animation: finance-dialog-in 150ms ease-out"
       >
         <div class="shrink-0 border-b border-neutral-100 px-6 py-4">
           <h3 class="text-base font-medium text-neutral-900">{{ title }}</h3>
@@ -63,3 +64,16 @@ defineEmits(["update:open"]);
     </div>
   </Teleport>
 </template>
+
+<style>
+@keyframes finance-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+</style>

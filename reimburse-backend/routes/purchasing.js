@@ -2,6 +2,10 @@
  * Purchasing order routes (PO with multi-items).
  * Status can be set for the whole PO or per item (multi-supplier).
  */
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
+const { searchPlatformUsers } = require("../utils/platformUsers");
+
 module.exports = function registerPurchasingRoutes({
   app,
   db,
@@ -355,37 +359,107 @@ module.exports = function registerPurchasingRoutes({
     }
   }
 
-  async function resolveRequestorId(req, companyId, bodyRequestorId) {
-    if (bodyRequestorId == null || bodyRequestorId === "") {
-      return req.user.id;
-    }
-    const id = Number(bodyRequestorId);
-    if (!Number.isFinite(id)) return req.user.id;
-
-    const [rows] = await db.query(
-      `SELECT id, company_id, role FROM users WHERE id = ?`,
-      [id],
-    );
-    if (!rows[0]) {
-      return { error: "Requestor not found" };
-    }
-    if (rows[0].role === "superadmin") {
-      return { error: "Invalid requestor" };
-    }
-    if (!isSuperadmin(req.user) && rows[0].company_id !== companyId) {
-      return { error: "Requestor must belong to the same company" };
-    }
-    if (
-      isSuperadmin(req.user) &&
-      rows[0].company_id != null &&
-      rows[0].company_id !== companyId
-    ) {
-      return { error: "Requestor must belong to the selected company" };
-    }
-    return id;
+  function syntheticHrEmail(code) {
+    const safe = String(code || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return safe ? `hr+${safe}@whtb.internal` : "";
   }
 
-  // Company colleagues for requestor combobox
+  /**
+   * Resolve pemohon: HR email/name/code upserts a local finance User,
+   * or legacy numeric requestor_id, or current user when empty.
+   */
+  async function resolveRequestorId(req, companyId, body = {}) {
+    const emailRaw = String(body.requestor_email || "")
+      .trim()
+      .toLowerCase();
+    const name = String(body.requestor_name || "").trim();
+    const code = String(body.requestor_employee_code || "").trim();
+    const bodyRequestorId = body.requestor_id;
+
+    const pickingHr = Boolean(emailRaw || name || code);
+    if (!pickingHr) {
+      if (bodyRequestorId == null || bodyRequestorId === "") {
+        return req.user.id;
+      }
+      const id = Number(bodyRequestorId);
+      if (!Number.isFinite(id)) return req.user.id;
+
+      const [rows] = await db.query(
+        `SELECT id, company_id, role FROM users WHERE id = ?`,
+        [id],
+      );
+      if (!rows[0]) {
+        return { error: "Requestor not found" };
+      }
+      if (rows[0].role === "superadmin") {
+        return { error: "Invalid requestor" };
+      }
+      if (!isSuperadmin(req.user) && rows[0].company_id !== companyId) {
+        return { error: "Requestor must belong to the same company" };
+      }
+      if (
+        isSuperadmin(req.user) &&
+        rows[0].company_id != null &&
+        rows[0].company_id !== companyId
+      ) {
+        return { error: "Requestor must belong to the selected company" };
+      }
+      return id;
+    }
+
+    const email = emailRaw || syntheticHrEmail(code);
+    if (!email) {
+      return { error: "Requestor email or employee code required" };
+    }
+    const displayName = name || emailRaw || code || email;
+
+    const [existing] = await db.query(
+      `SELECT id, name, company_id, role FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
+      [email],
+    );
+    if (existing[0]) {
+      if (existing[0].role === "superadmin") {
+        return { error: "Invalid requestor" };
+      }
+      if (
+        displayName &&
+        existing[0].name !== displayName
+      ) {
+        await db.query(`UPDATE users SET name = ? WHERE id = ?`, [
+          displayName,
+          existing[0].id,
+        ]);
+      }
+      // Align company when missing (SSO/HR upserts)
+      if (
+        companyId != null &&
+        existing[0].company_id == null &&
+        !isSuperadmin(req.user)
+      ) {
+        await db.query(`UPDATE users SET company_id = ? WHERE id = ?`, [
+          companyId,
+          existing[0].id,
+        ]);
+      }
+      return existing[0].id;
+    }
+
+    const placeholderHash = await bcrypt.hash(
+      crypto.randomBytes(32).toString("hex"),
+      10,
+    );
+    const [insert] = await db.query(
+      `INSERT INTO users (email, password, name, role, company_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [email, placeholderHash, displayName, "user", companyId],
+    );
+    return insert.insertId;
+  }
+
+  // Platform company users (admin.whtb.glass) for the pemohon combobox.
   app.get(
     "/api/purchasing/colleagues",
     authenticateToken,
@@ -397,22 +471,55 @@ module.exports = function registerPurchasingRoutes({
           return res.status(400).json({ success: false, error: scope.error });
         }
 
-        const [rows] = await db.query(
-          `SELECT id, name, email, role
-           FROM users
-           WHERE company_id = ? AND role <> 'superadmin'
-           ORDER BY name ASC, email ASC`,
+        const [companies] = await db.query(
+          "SELECT slug FROM companies WHERE id = ?",
           [scope.companyId],
         );
+        const companySlug = String(companies[0]?.slug || "whtb").trim().toLowerCase() || "whtb";
+        const search = String(req.query.search || req.query.q || "").trim();
+        const users = await searchPlatformUsers(search, companySlug);
+        const selfEmail = String(req.user.email || "").trim().toLowerCase();
+        const self = {
+          id: `self:${req.user.id}`,
+          employeeCode: "",
+          name: req.user.name || req.user.email || "",
+          email: req.user.email || "",
+          departmentName: null,
+          isSelf: true,
+        };
+        const q = search.toLowerCase();
+        const selfMatches =
+          !q ||
+          self.name.toLowerCase().includes(q) ||
+          selfEmail.includes(q);
+        const listed = users.map((row) => {
+          const email = String(row.email || "").trim().toLowerCase();
+          return {
+            id: String(row.id),
+            employeeCode: "",
+            name: row.name || "",
+            email,
+            departmentName: null,
+            isSelf: Boolean(selfEmail) && email === selfEmail,
+          };
+        });
+        const selfAlreadyListed = listed.some((row) => row.isSelf);
+        const rows = [
+          ...(selfMatches && !selfAlreadyListed ? [self] : []),
+          ...listed,
+        ];
+
+        const seen = new Set();
+        const unique = rows.filter((row) => {
+          const key = String(row.email || row.id).toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
 
         res.json({
           success: true,
-          colleagues: rows.map((u) => ({
-            id: u.id,
-            name: u.name || "",
-            email: u.email,
-            role: u.role,
-          })),
+          colleagues: unique,
         });
       } catch (error) {
         console.error("Error listing purchasing colleagues:", error);
@@ -614,7 +721,7 @@ module.exports = function registerPurchasingRoutes({
         const requestorResolved = await resolveRequestorId(
           req,
           scope.companyId,
-          req.body.requestor_id,
+          req.body,
         );
         if (requestorResolved?.error) {
           return res
@@ -695,11 +802,16 @@ module.exports = function registerPurchasingRoutes({
         }
 
         let requestorId = existing.requestor_id;
-        if (req.body.requestor_id !== undefined) {
+        const requestorTouched =
+          req.body.requestor_id !== undefined ||
+          req.body.requestor_email !== undefined ||
+          req.body.requestor_name !== undefined ||
+          req.body.requestor_employee_code !== undefined;
+        if (requestorTouched) {
           const resolved = await resolveRequestorId(
             req,
             existing.company_id,
-            req.body.requestor_id,
+            req.body,
           );
           if (resolved?.error) {
             return res

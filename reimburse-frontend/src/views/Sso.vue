@@ -45,7 +45,7 @@ onMounted(async () => {
   <div class="flex min-h-screen items-center justify-center p-4">
     <div class="text-center text-sm text-neutral-600">
       <div v-if="!error" class="flex flex-col items-center gap-3">
-        <Spinner class="size-6 text-neutral-400" />
+        <Spinner :size="64" state="connecting" />
         <p>Masuk dari portal…</p>
       </div>
       <div v-else class="space-y-3">

@@ -1,5 +1,5 @@
 <script setup>
-import Spinner from "./Spinner.vue";
+import ThinkingOrb from "./ThinkingOrb.vue";
 import { cn } from "@/lib/utils";
 
 defineProps({
@@ -10,6 +10,10 @@ defineProps({
   class: {
     type: [String, Object, Array],
     default: "",
+  },
+  state: {
+    type: String,
+    default: "working",
   },
 });
 </script>
@@ -24,7 +28,7 @@ defineProps({
       )
     "
   >
-    <Spinner class="size-6 text-neutral-400" />
+    <ThinkingOrb :state="state" :size="64" theme="light" aria-label="Loading" />
     <p v-if="label">{{ label }}</p>
     <slot v-else />
   </div>

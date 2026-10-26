@@ -1,20 +1,32 @@
 <script setup>
-import { Loader } from "@lucide/vue";
+import ThinkingOrb from "./ThinkingOrb.vue";
 import { cn } from "@/lib/utils";
 
-defineProps({
+const props = defineProps({
   class: {
     type: [String, Object, Array],
     default: "",
+  },
+  /** Override orb animation state */
+  state: {
+    type: String,
+    default: "working",
+  },
+  /** 20 inline | 32 compact | 64 page */
+  size: {
+    type: Number,
+    default: 20,
   },
 });
 </script>
 
 <template>
-  <Loader
+  <ThinkingOrb
     data-slot="spinner"
-    role="status"
+    :state="props.state"
+    :size="props.size"
+    theme="light"
     aria-label="Loading"
-    :class="cn('size-4 animate-spin', $props.class)"
+    :class="cn('text-neutral-500', $props.class)"
   />
 </template>

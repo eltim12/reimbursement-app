@@ -80,6 +80,8 @@ const filteredCategories = computed(() => {
   );
 });
 
+const listFiltersActive = computed(() => Boolean(search.value.trim()));
+
 const emptyForm = () => ({ name_id: "", name_zh: "" });
 
 const load = async () => {
@@ -227,7 +229,7 @@ onMounted(async () => {
     <div class="space-y-5">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 class="text-2xl font-semibold text-neutral-900">
+          <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">
             {{ t("categoriesTitle") }}
           </h1>
           <p class="text-sm text-neutral-500">{{ t("categoriesSubtitle") }}</p>
@@ -240,7 +242,20 @@ onMounted(async () => {
 
       <Card>
         <CardContent class="space-y-4 p-5">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div class="rounded-xl border border-neutral-200 bg-white p-4">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p class="text-sm font-medium text-neutral-900">{{ t("searchCategories") }}</p>
+              <Button
+                v-if="listFiltersActive"
+                type="button"
+                size="sm"
+                variant="ghost"
+                @click="search = ''"
+              >
+                {{ t("clearFilters") }}
+              </Button>
+            </div>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div v-if="isSuperadmin" class="w-full max-w-md space-y-2">
               <Label>{{ t("filterCompany") }}</Label>
               <Select
@@ -279,6 +294,7 @@ onMounted(async () => {
                 class="h-11 pl-9"
                 :placeholder="t('searchCategories')"
               />
+            </div>
             </div>
           </div>
 
@@ -326,7 +342,11 @@ onMounted(async () => {
                   >
                     <div class="inline-flex items-center gap-2">
                       <Tags class="h-4 w-4" />
-                      {{ t("noCategories") }}
+                      {{
+                        listFiltersActive && categories.length
+                          ? t("noCategoriesFiltered")
+                          : t("noCategories")
+                      }}
                     </div>
                   </td>
                 </tr>
@@ -359,6 +379,7 @@ onMounted(async () => {
                         variant="outline"
                         size="sm"
                         class="h-9"
+                        :aria-label="t('editCategory')"
                         @click="openEdit(category)"
                       >
                         <Pencil class="h-4 w-4" />
@@ -367,6 +388,7 @@ onMounted(async () => {
                         variant="outline"
                         size="sm"
                         class="h-9 text-red-600 hover:bg-red-50"
+                        :aria-label="t('delete')"
                         @click="requestDelete(category)"
                       >
                         <Trash2 class="h-4 w-4" />

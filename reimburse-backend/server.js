@@ -11,6 +11,12 @@ const {
 } = require("./utils/imageCompression");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const {
+  parseFinanceExchange,
+  linkFinanceUserFromExchange,
+  createMysqlLinkStore,
+} = require("./platform-link");
 
 dotenv.config();
 
@@ -577,52 +583,56 @@ app.post("/api/auth/sso/exchange", async (req, res) => {
       body: JSON.stringify({ code }),
     });
     const body = await r.json().catch(() => ({}));
-    const data = body.data || body;
-    if (!r.ok || !data.accessToken) {
-      return res.status(401).json({
-        success: false,
-        error: body.error || "Invalid or expired launch code",
-      });
+    const parsed = parseFinanceExchange(r.ok, body);
+    if (!parsed.ok) {
+      return res.status(parsed.status).json(parsed.body);
     }
-    const decoded = jwt.verify(data.accessToken, PLATFORM_JWT_SECRET, {
-      issuer: PLATFORM_JWT_ISSUER,
-    });
-    if (!isPlatformToken(decoded)) {
-      return res.status(401).json({ success: false, error: "Invalid token" });
-    }
-    if (data.module && data.module !== "finance") {
+    if (parsed.module && parsed.module !== "finance") {
       return res.status(403).json({
         success: false,
         error: "Launch code is not for finance",
       });
     }
+    let decoded;
     try {
-      const user = await resolveFinanceUserFromPlatform(decoded);
-      return res.json({
-        success: true,
-        token: data.accessToken,
-        refreshToken: data.refreshToken,
-        redirectPath: data.redirectPath || null,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          company_id: user.company_id,
-          purchasing_editor: user.purchasing_editor,
-          purchasing_enabled: user.purchasing_enabled,
-          mods: user.mods,
-        },
+      decoded = jwt.verify(body?.data?.accessToken || body?.accessToken, PLATFORM_JWT_SECRET, {
+        issuer: PLATFORM_JWT_ISSUER,
       });
-    } catch (grantErr) {
-      return res.status(grantErr.status || 403).json({
-        success: false,
-        error: grantErr.message || "Finance module not granted",
-      });
+    } catch {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid or expired launch code" });
     }
+    if (!isPlatformToken(decoded)) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid or expired launch code" });
+    }
+    const linked = await linkFinanceUserFromExchange(createMysqlLinkStore(db), {
+      sub: decoded.sub,
+      email: decoded.email,
+      name: decoded.name,
+      plat: !!decoded.plat,
+      mods: decoded.mods,
+      roles: decoded.roles,
+      exchangeUserId: parsed.userId,
+      company: decoded.plat ? null : await resolveLocalCompanyId(decoded),
+      requestBody: req.body,
+      hashPlaceholder: () => bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10),
+    });
+    if (!linked.ok) {
+      return res.status(linked.status).json(linked.body);
+    }
+    return res.json({
+      success: true,
+      token: body?.data?.accessToken || body?.accessToken,
+      refreshToken: body?.data?.refreshToken || body?.refreshToken,
+      redirectPath: parsed.redirectPath,
+      user: linked.user,
+    });
   } catch (e) {
-    console.error("SSO exchange error:", e);
-    res.status(500).json({ success: false, error: e.message });
+    console.error("SSO exchange error");
+    res.status(500).json({ success: false, error: "Login failed" });
   }
 });
 

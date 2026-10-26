@@ -141,7 +141,7 @@ onMounted(loadProfile);
   <AppShell>
     <div class="mx-auto max-w-2xl space-y-5">
       <div class="flex flex-col gap-1">
-        <h1 class="text-2xl font-semibold text-neutral-900">
+        <h1 class="text-2xl font-semibold tracking-tight text-neutral-900">
           {{ t("navProfile") }}
         </h1>
         <p class="text-sm text-neutral-500">{{ t("profileSubtitle") }}</p>
