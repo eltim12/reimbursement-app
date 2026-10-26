@@ -36,6 +36,12 @@ import { useCategories } from "@/composables/useCategories";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import {
+  listPageClass,
+  listScrollClass,
+  listSectionClass,
+  listTableScrollClass,
+} from "@/utils/listViewport";
+import {
   formatCurrency,
   formatLocaleDate,
   parseCurrencyAmount,
@@ -753,8 +759,8 @@ onMounted(async () => {
 
 <template>
   <AppShell>
-    <div class="space-y-5">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div :class="listPageClass">
+      <div class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div class="space-y-2">
           <button
             type="button"
@@ -807,8 +813,8 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="space-y-3">
-        <div class="flex items-end justify-between gap-3">
+      <div :class="listSectionClass">
+        <div class="flex shrink-0 items-end justify-between gap-3">
           <h2 class="text-base font-medium text-neutral-900">
             {{ t("entries") }}
           </h2>
@@ -828,7 +834,7 @@ onMounted(async () => {
         <div
           v-if="listError && !loading"
           role="alert"
-          class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          class="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
           <p>{{ listError }}</p>
           <Button
@@ -845,7 +851,7 @@ onMounted(async () => {
         <div
           v-else-if="!desktopList"
           ref="entryScroll"
-          class="max-h-[min(36rem,calc(100dvh-12rem))] space-y-3 overflow-y-auto overscroll-y-contain"
+          :class="[listScrollClass, 'space-y-3']"
         >
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
@@ -926,11 +932,11 @@ onMounted(async () => {
 
         <Card
           v-if="desktopList && (!listError || loading)"
-          class="max-h-[min(36rem,calc(100dvh-12rem))] w-full overflow-hidden p-0"
+          class="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
         >
           <div
             ref="entryScroll"
-            class="max-h-[min(36rem,calc(100dvh-12rem))] w-full overflow-auto overscroll-y-contain"
+            :class="listTableScrollClass"
           >
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -1044,7 +1050,7 @@ onMounted(async () => {
         </Card>
         <div
           v-if="!loading && !listError"
-          class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
         >
           <p class="text-sm text-neutral-500" role="status">{{ entryRangeLabel }}</p>
           <Pagination class="mx-0 w-auto justify-end" :label="t('entriesPagination')">

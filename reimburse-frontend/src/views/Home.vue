@@ -1,11 +1,10 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { ChevronRight, FileText, Plus, Search, Trash2 } from "@lucide/vue";
+import { ChevronRight, Plus, Search, Trash2 } from "@lucide/vue";
 import AppShell from "@/layouts/AppShell.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
-import CardContent from "@/components/ui/CardContent.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Field from "@/components/ui/Field.vue";
@@ -33,6 +32,12 @@ import { useCompanies } from "@/composables/useCompanies";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import { formatLocaleDate } from "@/utils/formatters";
+import {
+  listPageClass,
+  listScrollClass,
+  listSectionClass,
+  listTableScrollClass,
+} from "@/utils/listViewport";
 import { paginationItems } from "@/utils/pagination";
 
 const router = useRouter();
@@ -298,13 +303,18 @@ onMounted(async () => {
 
 <template>
   <AppShell>
-    <div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+    <div :class="listPageClass">
       <div class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div class="flex flex-col gap-1">
           <h1 class="text-2xl font-semibold text-neutral-900">
             {{ t("listsTitle") }}
           </h1>
-          <p class="text-sm text-neutral-500">{{ t("listsSubtitle") }}</p>
+          <p class="text-sm text-neutral-500">
+            {{ t("listsSubtitle") }}
+            <span class="font-mono text-neutral-700">
+              · {{ total }} {{ t("listsCount") }}
+            </span>
+          </p>
         </div>
         <Button
           v-if="canCreateLists"
@@ -317,23 +327,7 @@ onMounted(async () => {
         </Button>
       </div>
 
-      <div class="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent class="flex items-center gap-3 p-5">
-            <div class="rounded-lg bg-neutral-100 p-3">
-              <FileText class="h-5 w-5 text-neutral-700" />
-            </div>
-            <div>
-              <div class="text-xs text-neutral-500">{{ t("listsCount") }}</div>
-              <div class="font-mono text-xl font-semibold">
-                {{ total }}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div class="flex min-h-0 flex-1 flex-col gap-3">
+      <div :class="listSectionClass">
         <div class="shrink-0 rounded-xl border border-neutral-200 bg-white p-4">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p class="text-sm font-medium text-neutral-900">{{ t("searchLists") }}</p>
@@ -393,13 +387,9 @@ onMounted(async () => {
         </div>
 
         <div
-          ref="listScroll"
-          class="min-h-48 flex-1 overflow-y-auto overscroll-y-contain"
-        >
-        <div
           v-if="loadError && !loading"
           role="alert"
-          class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          class="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
           <p>{{ loadError }}</p>
           <Button
@@ -414,7 +404,11 @@ onMounted(async () => {
         </div>
 
         <!-- Mobile: card list (shadcn Item-style rows) -->
-        <div v-else-if="!desktopList" class="space-y-3">
+        <div
+          v-else-if="!desktopList"
+          ref="listScroll"
+          :class="[listScrollClass, 'space-y-3']"
+        >
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
             v-else-if="lists.length === 0"
@@ -483,14 +477,17 @@ onMounted(async () => {
         </div>
 
         <!-- Desktop: table -->
-        <DataSkeleton
-          v-if="loading && desktopList"
-          variant="table"
-          :rows="6"
-          :cols="listTableColspan"
-        />
-        <Card v-else-if="!loadError && desktopList" class="overflow-hidden p-0">
-          <div class="overflow-x-auto">
+        <div
+          v-else-if="loading && desktopList"
+          class="min-h-0 flex-1 overflow-hidden"
+        >
+          <DataSkeleton variant="table" :rows="6" :cols="listTableColspan" />
+        </div>
+        <Card
+          v-else-if="desktopList"
+          class="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
+        >
+          <div ref="listScroll" :class="listTableScrollClass">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
                 <tr class="text-left">
@@ -586,7 +583,6 @@ onMounted(async () => {
             </table>
           </div>
         </Card>
-        </div>
         <div
           v-if="!loading && !loadError"
           class="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"

@@ -225,10 +225,12 @@ const go = (item) => {
 </script>
 
 <template>
-  <div class="flex h-dvh overflow-hidden bg-neutral-50 text-neutral-900">
+  <div
+    class="flex h-full min-h-0 w-full flex-1 overflow-hidden bg-neutral-50 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-neutral-900"
+  >
     <!-- Desktop sidebar -->
     <aside
-      class="hidden w-60 shrink-0 flex-col border-r border-neutral-200 bg-white md:flex"
+      class="hidden min-h-0 w-60 shrink-0 flex-col border-r border-neutral-200 bg-white md:flex"
     >
       <div
         class="flex h-16 items-center gap-2 border-b border-neutral-200 px-5"
@@ -297,7 +299,7 @@ const go = (item) => {
     <aside
       :class="
         cn(
-          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-neutral-200 bg-white transition-transform md:hidden',
+          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-neutral-200 bg-white pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] transition-transform md:hidden',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )
       "
@@ -374,7 +376,7 @@ const go = (item) => {
         <LangToggle />
       </header>
 
-      <main class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain p-4 md:p-6">
+      <main class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-none p-4 md:p-6">
         <slot />
       </main>
     </div>

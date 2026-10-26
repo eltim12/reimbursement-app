@@ -1,5 +1,5 @@
 <template>
-  <div id="app-root">
+  <div id="app-root" class="flex h-full min-h-0 flex-col">
     <router-view />
     <Toaster />
   </div>
