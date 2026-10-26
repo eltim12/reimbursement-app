@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight } from "@lucide/vue";
 import Button from "@/components/ui/Button.vue";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/composables/useI18n";
 
 const props = defineProps({
   modelValue: {
@@ -16,6 +17,8 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update:modelValue", "select"]);
+const { locale } = useI18n();
+const dateLocale = computed(() => (locale.value === "zh" ? "zh-CN" : "id-ID"));
 
 const viewDate = ref(
   props.modelValue
@@ -33,7 +36,7 @@ watch(
 );
 
 const monthLabel = computed(() =>
-  viewDate.value.toLocaleDateString(undefined, {
+  viewDate.value.toLocaleDateString(dateLocale.value, {
     month: "long",
     year: "numeric",
   }),
@@ -44,7 +47,7 @@ const weekdayLabels = computed(() => {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
-    return d.toLocaleDateString(undefined, { weekday: "short" });
+    return d.toLocaleDateString(dateLocale.value, { weekday: "short" });
   });
 });
 

@@ -1,3 +1,22 @@
+// Calendar date for the active UI language. Date-only values stay on that
+// calendar day; timestamps are shown in Asia/Jakarta.
+export function formatLocaleDate(value, locale = "en") {
+  if (value == null || value === "") return "—";
+  const tag = locale === "zh" ? "zh-CN" : "id-ID";
+  const options = {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  };
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = match
+    ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12))
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(tag, options).format(date);
+}
+
 // Format currency (IDR or RMB)
 export function formatCurrency(amount, currency = "IDR") {
   // if (amount === 0) return 'FREE'

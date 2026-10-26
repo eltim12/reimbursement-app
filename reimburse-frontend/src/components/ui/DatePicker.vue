@@ -4,6 +4,7 @@ import { Calendar as CalendarIcon } from "@lucide/vue";
 import Button from "@/components/ui/Button.vue";
 import Calendar from "@/components/ui/Calendar.vue";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/composables/useI18n";
 
 const props = defineProps({
   modelValue: {
@@ -23,6 +24,8 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update:modelValue"]);
+const { locale } = useI18n();
+const dateLocale = computed(() => (locale.value === "zh" ? "zh-CN" : "id-ID"));
 
 const open = ref(false);
 const rootEl = ref(null);
@@ -37,7 +40,7 @@ const selectedDate = computed(() => {
 
 const displayLabel = computed(() => {
   if (!selectedDate.value) return null;
-  return selectedDate.value.toLocaleDateString(undefined, {
+  return selectedDate.value.toLocaleDateString(dateLocale.value, {
     dateStyle: "long",
   });
 });

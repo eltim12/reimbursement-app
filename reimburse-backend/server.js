@@ -5,6 +5,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
 const db = require("./config/database");
+const { parseListPage, listSearchClause } = require("./list-page");
 const {
   compressAndSaveImage,
   deleteImage,
@@ -1395,7 +1396,23 @@ const findCompanyList = async (listId, companyId, { ownerId = null } = {}) => {
   return rows;
 };
 
-// Get all lists (Protected)
+function formatListRow(list) {
+  return {
+    id: list.id,
+    name: list.name,
+    total: parseFloat(list.total),
+    userId: list.user_id,
+    ownerEmail: list.owner_email || null,
+    ownerName: list.owner_name || null,
+    companyId: list.company_id ?? null,
+    companyName: list.company_name || null,
+    createdAt: list.created_at.toISOString(),
+    lastUpdated: list.updated_at.toISOString(),
+  };
+}
+
+// Get lists (Protected). Without page/pageSize the full filtered set is returned.
+// With page/pageSize the same filter is applied, then LIMIT/OFFSET.
 app.get("/api/lists", authenticateToken, requireCompanyUser, async (req, res) => {
   try {
     const scope = resolveCompanyFilter(req);
@@ -1403,60 +1420,58 @@ app.get("/api/lists", authenticateToken, requireCompanyUser, async (req, res) =>
       return res.status(400).json({ success: false, error: scope.error });
     }
 
-    let lists;
+    const pageQuery = parseListPage(req.query);
+    const search = listSearchClause(pageQuery.q);
+    const limitSql = pageQuery.paginate
+      ? ` LIMIT ${pageQuery.pageSize} OFFSET ${pageQuery.offset}`
+      : "";
+    const limitParams = [];
+
+    const selectSql = `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
+              u.email AS owner_email, u.name AS owner_name,
+              COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name`;
+
+    let countSql;
+    let dataSql;
+    let filterParams;
     if (canViewAllLists(req.user)) {
+      const fromSql = `FROM lists l
+         INNER JOIN users u ON u.id = l.user_id
+         LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)`;
       if (scope.companyId == null) {
-        [lists] = await db.query(
-          `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
-                  u.email AS owner_email, u.name AS owner_name,
-                  COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
-           FROM lists l
-           INNER JOIN users u ON u.id = l.user_id
-           LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
-           WHERE COALESCE(l.company_id, u.company_id) IS NOT NULL
-           ORDER BY l.created_at DESC`,
-        );
+        const whereSql = `WHERE COALESCE(l.company_id, u.company_id) IS NOT NULL${search.sql}`;
+        countSql = `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`;
+        dataSql = `${selectSql} ${fromSql} ${whereSql} ORDER BY l.created_at DESC${limitSql}`;
+        filterParams = search.params;
       } else {
-        [lists] = await db.query(
-          `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
-                  u.email AS owner_email, u.name AS owner_name,
-                  COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
-           FROM lists l
-           INNER JOIN users u ON u.id = l.user_id
-           LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
-           WHERE COALESCE(l.company_id, u.company_id) = ?
-           ORDER BY l.created_at DESC`,
-          [scope.companyId],
-        );
+        const whereSql = `WHERE COALESCE(l.company_id, u.company_id) = ?${search.sql}`;
+        countSql = `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`;
+        dataSql = `${selectSql} ${fromSql} ${whereSql} ORDER BY l.created_at DESC${limitSql}`;
+        filterParams = [scope.companyId, ...search.params];
       }
     } else {
-      [lists] = await db.query(
-        `SELECT l.id, l.name, l.total, l.created_at, l.updated_at, l.user_id,
-                u.email AS owner_email, u.name AS owner_name,
-                COALESCE(l.company_id, u.company_id) AS company_id, c.name AS company_name
-         FROM lists l
+      const fromSql = `FROM lists l
          LEFT JOIN users u ON u.id = l.user_id
-         LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)
-         WHERE l.user_id = ?
-         ORDER BY l.created_at DESC`,
-        [req.user.id],
-      );
+         LEFT JOIN companies c ON c.id = COALESCE(l.company_id, u.company_id)`;
+      const whereSql = `WHERE l.user_id = ?${search.sql}`;
+      countSql = `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`;
+      dataSql = `${selectSql} ${fromSql} ${whereSql} ORDER BY l.created_at DESC${limitSql}`;
+      filterParams = [req.user.id, ...search.params];
     }
 
-    const formattedLists = lists.map((list) => ({
-      id: list.id,
-      name: list.name,
-      total: parseFloat(list.total),
-      userId: list.user_id,
-      ownerEmail: list.owner_email || null,
-      ownerName: list.owner_name || null,
-      companyId: list.company_id ?? null,
-      companyName: list.company_name || null,
-      createdAt: list.created_at.toISOString(),
-      lastUpdated: list.updated_at.toISOString(),
-    }));
+    const [[countRow]] = await db.query(countSql, filterParams);
+    const [lists] = await db.query(dataSql, [...filterParams, ...limitParams]);
+    const total = Number(countRow?.total || 0);
+    const formattedLists = lists.map(formatListRow);
 
-    res.json({ success: true, companyId: scope.companyId, lists: formattedLists });
+    res.json({
+      success: true,
+      companyId: scope.companyId,
+      lists: formattedLists,
+      total,
+      page: pageQuery.paginate ? pageQuery.page : 1,
+      pageSize: pageQuery.paginate ? pageQuery.pageSize : total,
+    });
   } catch (error) {
     console.error("Error fetching lists:", error);
     res.status(500).json({ success: false, error: error.message });

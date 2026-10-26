@@ -9,6 +9,7 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import DataSkeleton from "@/components/ui/DataSkeleton.vue";
+import PaginationBar from "@/components/ui/PaginationBar.vue";
 import DatePicker from "@/components/ui/DatePicker.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Field from "@/components/ui/Field.vue";
@@ -29,6 +30,7 @@ import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
 import {
   formatCurrency,
+  formatLocaleDate,
   parseCurrencyAmount,
 } from "@/utils/formatters";
 import { exportExcel } from "@/utils/excelExport";
@@ -36,7 +38,7 @@ import { exportPDF } from "@/utils/pdfExport";
 
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { showToast } = useToast();
 const {
   categoryItems,
@@ -67,7 +69,10 @@ const currencyItems = computed(() => [
   { label: "RMB", value: "RMB" },
 ]);
 
+const ENTRY_PAGE_SIZE = 20;
+const entryPage = ref(1);
 const loading = ref(false);
+const listError = ref("");
 const saving = ref(false);
 const parsingReceipt = ref(false);
 const exporting = ref(false);
@@ -90,6 +95,26 @@ const listOwnerName = ref("");
 const listOwnerEmail = ref("");
 const entries = ref([]);
 const total = ref(0);
+const entryPageCount = computed(() =>
+  Math.max(1, Math.ceil(entries.value.length / ENTRY_PAGE_SIZE) || 1),
+);
+const visibleEntryPage = computed(() =>
+  Math.min(entryPage.value, entryPageCount.value),
+);
+const pagedEntries = computed(() => {
+  const start = (visibleEntryPage.value - 1) * ENTRY_PAGE_SIZE;
+  return entries.value.slice(start, start + ENTRY_PAGE_SIZE).map((entry, offset) => ({
+    entry,
+    index: start + offset,
+    number: start + offset + 1,
+  }));
+});
+const formatEntryDate = (value) => formatLocaleDate(value, locale.value);
+const showEntryOnPage = (match) => {
+  const index = entries.value.findIndex(match);
+  if (index < 0) return;
+  entryPage.value = Math.floor(index / ENTRY_PAGE_SIZE) + 1;
+};
 
 const emptyEntryForm = () => ({
   date: "",
@@ -321,6 +346,7 @@ const loadList = async (id) => {
 
   try {
     loading.value = true;
+    listError.value = "";
     const response = await api.getList(id);
     if (response.success) {
       const list = response.list;
@@ -332,7 +358,11 @@ const loadList = async (id) => {
       entries.value = (list.entries || []).sort(
         (a, b) => new Date(a.Date) - new Date(b.Date),
       );
+      entryPage.value = 1;
       total.value = list.total || 0;
+    } else {
+      listError.value = t("failedToLoadList");
+      showToast(t("failedToLoadList"), "error");
     }
   } catch {
     showToast(t("failedToLoadList"), "error");
@@ -470,6 +500,7 @@ const saveEntry = async () => {
       }
       if (response.listTotal != null) total.value = response.listTotal;
       entries.value.sort((a, b) => new Date(a.Date) - new Date(b.Date));
+      showEntryOnPage((entry) => entry.id === editingId);
       showToast(t("entryUpdated"), "success");
     } else {
       const newEntry = {
@@ -497,6 +528,13 @@ const saveEntry = async () => {
             (a, b) => new Date(a.Date) - new Date(b.Date),
           );
           total.value = res.list.total || total.value;
+          showEntryOnPage(
+            (entry) =>
+              entry.Date === date &&
+              entry.Category === category &&
+              sameAmount(entry.Amount, amount) &&
+              normalizeNote(entry.Note) === normalizeNote(entryForm.value.note),
+          );
         }
       } catch (e) {
         console.error("Failed to sync entries after adding", e);
@@ -526,7 +564,7 @@ const deleteEntryDetails = computed(() => {
   if (!entry) return null;
   const currency = entry.Currency || "IDR";
   return {
-    date: entry.Date,
+    date: formatEntryDate(entry.Date),
     category: entry.Category,
     amount: formatCurrency(entry.Amount, currency),
   };
@@ -562,6 +600,9 @@ const confirmDeleteEntry = async () => {
         await api.deleteEntry(entry.id);
         entries.value.splice(index, 1);
         total.value -= removedAmount;
+        if (entryPage.value > entryPageCount.value) {
+          entryPage.value = entryPageCount.value;
+        }
         await api.updateList(currentListId.value, { total: total.value });
         showToast(t("entryDeleted"), "success");
       } catch (error) {
@@ -591,6 +632,9 @@ const confirmDeleteEntry = async () => {
       showToast(t("entryDeleted"), "success");
     }
 
+    if (entryPage.value > entryPageCount.value) {
+      entryPage.value = entryPageCount.value;
+    }
     cancelDeleteEntry();
   } catch (error) {
     console.error("Error deleting entry:", error);
@@ -752,7 +796,24 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="space-y-3 md:hidden">
+        <div
+          v-if="listError && !loading"
+          role="alert"
+          class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          <p>{{ listError }}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            class="mt-2"
+            @click="loadList(route.params.id)"
+          >
+            {{ t("retry") }}
+          </Button>
+        </div>
+
+        <div v-else class="space-y-3 md:hidden">
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
             v-else-if="entries.length === 0"
@@ -762,38 +823,38 @@ onMounted(async () => {
           </div>
           <template v-else>
             <div
-              v-for="(entry, idx) in entries"
-              :key="entry.id || idx"
+              v-for="row in pagedEntries"
+              :key="row.entry.id || row.index"
               class="rounded-xl border border-neutral-200 bg-white p-4"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1 space-y-1">
                   <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span class="font-mono text-xs text-neutral-400"
-                      >#{{ idx + 1 }}</span
+                      >#{{ row.number }}</span
                     >
                     <span class="font-medium text-neutral-900">{{
-                      getCategoryLabel(entry.Category)
+                      getCategoryLabel(row.entry.Category)
                     }}</span>
                   </div>
                   <p class="font-mono text-base font-semibold text-neutral-900">
-                    {{ formatCurrency(entry.Amount, entry.Currency || "IDR") }}
+                    {{ formatCurrency(row.entry.Amount, row.entry.Currency || "IDR") }}
                   </p>
                   <p class="text-sm text-neutral-600">
-                    {{ entry.Note || "—" }}
+                    {{ row.entry.Note || "—" }}
                   </p>
                   <p class="font-mono text-xs text-neutral-500">
-                    {{ entry.Date }}
+                    {{ formatEntryDate(row.entry.Date) }}
                   </p>
                 </div>
                 <button
-                  v-if="getProofUrl(entry.Proof)"
+                  v-if="getProofUrl(row.entry.Proof)"
                   type="button"
                   class="shrink-0 transition-transform duration-150 ease-out active:scale-[0.99]"
-                  @click="openProofPreview(entry.Proof)"
+                  @click="openProofPreview(row.entry.Proof)"
                 >
                   <img
-                    :src="getProofUrl(entry.Proof)"
+                    :src="getProofUrl(row.entry.Proof)"
                     :alt="t('tableProof')"
                     class="size-16 rounded-lg border border-neutral-200 object-cover"
                   />
@@ -804,27 +865,36 @@ onMounted(async () => {
                 class="mt-3 flex items-center justify-end gap-1 border-t border-neutral-100 pt-2"
               >
                 <Button
-                  v-if="entry.id"
+                  v-if="row.entry.id"
                   variant="ghost"
                   size="icon-sm"
-                  @click="openEditEntry(entry)"
+                  :aria-label="t('editEntry')"
+                  :title="t('editEntry')"
+                  @click="openEditEntry(row.entry)"
                 >
-                  <Pencil class="h-4 w-4" />
+                  <Pencil class="h-4 w-4" aria-hidden="true" />
+                  <span class="sr-only">{{ t("editEntry") }}</span>
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   class="text-red-600 hover:bg-red-50 hover:text-red-700"
-                  @click="requestDeleteEntry(idx)"
+                  :aria-label="t('delete')"
+                  :title="t('delete')"
+                  @click="requestDeleteEntry(row.index)"
                 >
-                  <Trash2 class="h-4 w-4" />
+                  <Trash2 class="h-4 w-4" aria-hidden="true" />
+                  <span class="sr-only">{{ t("delete") }}</span>
                 </Button>
               </div>
             </div>
           </template>
         </div>
 
-        <Card class="hidden w-full overflow-hidden p-0 md:block">
+        <Card
+          v-if="!listError || loading"
+          class="hidden w-full overflow-hidden p-0 md:block"
+        >
           <div class="w-full overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -870,32 +940,32 @@ onMounted(async () => {
                   </td>
                 </tr>
                 <tr
-                  v-for="(entry, idx) in entries"
-                  :key="entry.id || idx"
+                  v-for="row in pagedEntries"
+                  :key="row.entry.id || row.index"
                   class="border-b border-neutral-100 last:border-0"
                 >
                   <td class="whitespace-nowrap px-4 py-3 font-mono text-neutral-500">
-                    {{ idx + 1 }}
+                    {{ row.number }}
                   </td>
-                  <td class="whitespace-nowrap px-4 py-3">{{ entry.Date }}</td>
+                  <td class="whitespace-nowrap px-4 py-3">{{ formatEntryDate(row.entry.Date) }}</td>
                   <td class="whitespace-nowrap px-4 py-3 font-medium">
-                    {{ getCategoryLabel(entry.Category) }}
+                    {{ getCategoryLabel(row.entry.Category) }}
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-neutral-600">
-                    {{ entry.Note || "—" }}
+                    {{ row.entry.Note || "—" }}
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 font-mono">
-                    {{ formatCurrency(entry.Amount, entry.Currency || "IDR") }}
+                    {{ formatCurrency(row.entry.Amount, row.entry.Currency || "IDR") }}
                   </td>
                   <td class="whitespace-nowrap px-4 py-3">
                     <button
-                      v-if="getProofUrl(entry.Proof)"
+                      v-if="getProofUrl(row.entry.Proof)"
                       type="button"
                       class="block transition-transform duration-150 ease-out active:scale-[0.99]"
-                      @click="openProofPreview(entry.Proof)"
+                      @click="openProofPreview(row.entry.Proof)"
                     >
                       <img
-                        :src="getProofUrl(entry.Proof)"
+                        :src="getProofUrl(row.entry.Proof)"
                         :alt="t('tableProof')"
                         class="max-h-24 max-w-[120px] rounded-lg border border-neutral-200 object-cover transition-opacity hover:opacity-80"
                       />
@@ -908,20 +978,26 @@ onMounted(async () => {
                   >
                     <div class="inline-flex gap-1">
                       <Button
-                        v-if="entry.id"
+                        v-if="row.entry.id"
                         variant="ghost"
                         size="icon-sm"
-                        @click="openEditEntry(entry)"
+                        :aria-label="t('editEntry')"
+                        :title="t('editEntry')"
+                        @click="openEditEntry(row.entry)"
                       >
-                        <Pencil class="h-4 w-4" />
+                        <Pencil class="h-4 w-4" aria-hidden="true" />
+                        <span class="sr-only">{{ t("editEntry") }}</span>
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         class="text-red-600 hover:bg-red-50 hover:text-red-700"
-                        @click="requestDeleteEntry(idx)"
+                        :aria-label="t('delete')"
+                        :title="t('delete')"
+                        @click="requestDeleteEntry(row.index)"
                       >
-                        <Trash2 class="h-4 w-4" />
+                        <Trash2 class="h-4 w-4" aria-hidden="true" />
+                        <span class="sr-only">{{ t("delete") }}</span>
                       </Button>
                     </div>
                   </td>
@@ -930,6 +1006,14 @@ onMounted(async () => {
             </table>
           </div>
         </Card>
+        <PaginationBar
+          v-if="!loading && !listError"
+          :page="visibleEntryPage"
+          :page-size="ENTRY_PAGE_SIZE"
+          :total="entries.length"
+          :label="t('entriesPagination')"
+          @update:page="(next) => (entryPage = next)"
+        />
       </div>
     </div>
 

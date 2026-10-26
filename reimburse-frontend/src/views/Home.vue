@@ -12,6 +12,7 @@ import CardTitle from "@/components/ui/CardTitle.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import DataSkeleton from "@/components/ui/DataSkeleton.vue";
 import Input from "@/components/ui/Input.vue";
+import PaginationBar from "@/components/ui/PaginationBar.vue";
 import Label from "@/components/ui/Label.vue";
 import Select from "@/components/ui/Select.vue";
 import SelectContent from "@/components/ui/SelectContent.vue";
@@ -23,9 +24,10 @@ import { useI18n } from "@/composables/useI18n";
 import { useCompanies } from "@/composables/useCompanies";
 import { useToast } from "@/composables/useToast";
 import api from "@/services/api";
+import { formatLocaleDate } from "@/utils/formatters";
 
 const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { showToast } = useToast();
 const { companyFilterItems, loadCompanies } = useCompanies();
 
@@ -70,59 +72,109 @@ const listTableColspan = computed(() => {
   return cols;
 });
 
+const PAGE_SIZE = 20;
 const loading = ref(false);
 const lists = ref([]);
+const total = ref(0);
+const page = ref(1);
+const loadError = ref("");
 const newListName = ref("");
 const search = ref("");
 const companyFilter = ref("");
 const showDeleteModal = ref(false);
 const pendingDeleteList = ref(null);
 const deleting = ref(false);
+let searchTimer = null;
+let loadSeq = 0;
 
-const filteredLists = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  if (!q) return lists.value;
-  return lists.value.filter((list) => {
-    const haystack = [
-      list.id,
-      list.name,
-      list.ownerName,
-      list.ownerEmail,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(q);
-  });
-});
+const formatCreatedAt = (value) => formatLocaleDate(value, locale.value);
 
 const loadLists = async () => {
+  const seq = ++loadSeq;
   try {
     loading.value = true;
-    const params = {};
+    loadError.value = "";
+    const params = {
+      page: page.value,
+      pageSize: PAGE_SIZE,
+    };
+    const q = search.value.trim();
+    if (q) params.q = q;
     if (isSuperadmin.value && companyFilter.value) {
       params.companyId = companyFilter.value;
     }
     const response = await api.getLists(params);
-    if (response.success) {
-      lists.value = response.lists
-        .map((list) => ({
-          id: list.id,
-          name: list.name,
-          createdAt: list.createdAt,
-          userId: list.userId,
-          ownerName: list.ownerName,
-          ownerEmail: list.ownerEmail,
-          companyName: list.companyName,
-          total: list.total,
-        }))
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    if (seq !== loadSeq) return;
+    if (!response.success) {
+      loadError.value = t("failedToLoadLists");
+      showToast(t("failedToLoadLists"), "error");
+      return;
+    }
+    let rows = response.lists.map((list) => ({
+      id: list.id,
+      name: list.name,
+      createdAt: list.createdAt,
+      userId: list.userId,
+      ownerName: list.ownerName,
+      ownerEmail: list.ownerEmail,
+      companyName: list.companyName,
+      total: list.total,
+    }));
+    const serverTotal = Number(response.total);
+    const serverPaged =
+      Number.isFinite(serverTotal) && rows.length <= PAGE_SIZE && serverTotal >= rows.length;
+    if (!serverPaged && rows.length > PAGE_SIZE) {
+      const q = search.value.trim().toLowerCase();
+      if (q) {
+        rows = rows.filter((list) =>
+          [list.id, list.name, list.ownerName, list.ownerEmail]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+        );
+      }
+      total.value = rows.length;
+      const start = (page.value - 1) * PAGE_SIZE;
+      lists.value = rows.slice(start, start + PAGE_SIZE);
+    } else {
+      total.value = Number.isFinite(serverTotal) ? serverTotal : rows.length;
+      lists.value = rows;
+    }
+    const pages = Math.max(1, Math.ceil(total.value / PAGE_SIZE) || 1);
+    if (page.value > pages) {
+      page.value = pages;
+      loading.value = false;
+      return loadLists();
     }
   } catch {
+    if (seq !== loadSeq) return;
+    loadError.value = t("failedToLoadLists");
     showToast(t("failedToLoadLists"), "error");
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
+};
+
+const scheduleSearch = () => {
+  page.value = 1;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    loadLists();
+  }, 250);
+};
+
+const clearListFilters = async () => {
+  clearTimeout(searchTimer);
+  search.value = "";
+  companyFilter.value = "";
+  page.value = 1;
+  await loadLists();
+};
+
+const goToPage = (next) => {
+  page.value = next;
+  loadLists();
 };
 
 const createList = async () => {
@@ -172,6 +224,7 @@ const confirmDeleteList = async () => {
     if (response.success) {
       showDeleteModal.value = false;
       pendingDeleteList.value = null;
+      if (lists.value.length === 1 && page.value > 1) page.value -= 1;
       await loadLists();
       showToast(t("listDeleted"), "success");
     }
@@ -209,7 +262,7 @@ onMounted(async () => {
             <div>
               <div class="text-xs text-neutral-500">{{ t("listsCount") }}</div>
               <div class="font-mono text-xl font-semibold">
-                {{ lists.length }}
+                {{ total }}
               </div>
             </div>
           </CardContent>
@@ -251,13 +304,7 @@ onMounted(async () => {
               type="button"
               size="sm"
               variant="ghost"
-              @click="
-                async () => {
-                  search = '';
-                  companyFilter = '';
-                  await loadLists();
-                }
-              "
+              @click="clearListFilters"
             >
               {{ t("clearFilters") }}
             </Button>
@@ -272,6 +319,7 @@ onMounted(async () => {
                 @update:model-value="
                   async (v) => {
                     companyFilter = v ?? '';
+                    page = 1;
                     await loadLists();
                   }
                 "
@@ -300,23 +348,41 @@ onMounted(async () => {
                 v-model="search"
                 class="h-11 pl-9"
                 :placeholder="t('searchLists')"
+                @input="scheduleSearch"
               />
             </div>
           </div>
         </div>
 
+        <div
+          v-if="loadError && !loading"
+          role="alert"
+          class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        >
+          <p>{{ loadError }}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            class="mt-2"
+            @click="loadLists"
+          >
+            {{ t("retry") }}
+          </Button>
+        </div>
+
         <!-- Mobile: card list (shadcn Item-style rows) -->
-        <div class="space-y-3 md:hidden">
+        <div v-else class="space-y-3 md:hidden">
           <DataSkeleton v-if="loading" variant="cards" :rows="5" />
           <div
-            v-else-if="filteredLists.length === 0"
+            v-else-if="lists.length === 0"
             class="rounded-xl border border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500"
           >
             {{ search || companyFilter ? t("noListsFiltered") : t("noLists") }}
           </div>
           <template v-else>
             <div
-              v-for="list in filteredLists"
+              v-for="list in lists"
               :key="list.id"
               class="flex w-full items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4 text-left transition-[transform,background-color] duration-150 ease-out active:scale-[0.99] active:bg-neutral-50"
               role="button"
@@ -352,7 +418,7 @@ onMounted(async () => {
                   </span>
                 </div>
                 <p class="font-mono text-xs text-neutral-500">
-                  {{ new Date(list.createdAt).toLocaleDateString() }}
+                  {{ formatCreatedAt(list.createdAt) }}
                 </p>
               </div>
               <div class="flex shrink-0 items-center gap-1">
@@ -361,9 +427,12 @@ onMounted(async () => {
                   variant="ghost"
                   size="icon-sm"
                   class="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  :aria-label="t('deleteList')"
+                  :title="t('deleteList')"
                   @click.stop="requestDeleteList(list)"
                 >
-                  <Trash2 class="h-4 w-4" />
+                  <Trash2 class="h-4 w-4" aria-hidden="true" />
+                  <span class="sr-only">{{ t("deleteList") }}</span>
                 </Button>
                 <ChevronRight class="h-4 w-4 text-neutral-400" />
               </div>
@@ -379,7 +448,7 @@ onMounted(async () => {
           :rows="6"
           :cols="listTableColspan"
         />
-        <Card v-else class="hidden overflow-hidden p-0 md:block">
+        <Card v-else-if="!loadError" class="hidden overflow-hidden p-0 md:block">
           <div class="overflow-x-auto">
             <table class="w-full min-w-max text-sm">
               <thead class="border-b border-neutral-200 bg-neutral-50">
@@ -414,7 +483,7 @@ onMounted(async () => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="filteredLists.length === 0">
+                <tr v-if="lists.length === 0">
                   <td
                     :colspan="listTableColspan"
                     class="px-4 py-8 text-center text-neutral-500"
@@ -423,7 +492,7 @@ onMounted(async () => {
                   </td>
                 </tr>
                 <tr
-                  v-for="list in filteredLists"
+                  v-for="list in lists"
                   :key="list.id"
                   class="cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50"
                   @click="openList(list.id)"
@@ -452,7 +521,7 @@ onMounted(async () => {
                     </div>
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 font-mono text-neutral-600">
-                    {{ new Date(list.createdAt).toLocaleDateString() }}
+                    {{ formatCreatedAt(list.createdAt) }}
                   </td>
                   <td
                     v-if="canDeleteLists"
@@ -463,9 +532,12 @@ onMounted(async () => {
                       variant="ghost"
                       size="icon-sm"
                       class="text-red-600 hover:bg-red-50 hover:text-red-700"
+                      :aria-label="t('deleteList')"
+                      :title="t('deleteList')"
                       @click.stop="requestDeleteList(list)"
                     >
-                      <Trash2 class="h-4 w-4" />
+                      <Trash2 class="h-4 w-4" aria-hidden="true" />
+                      <span class="sr-only">{{ t("deleteList") }}</span>
                     </Button>
                   </td>
                 </tr>
@@ -473,6 +545,14 @@ onMounted(async () => {
             </table>
           </div>
         </Card>
+        <PaginationBar
+          v-if="!loading && !loadError"
+          :page="page"
+          :page-size="PAGE_SIZE"
+          :total="total"
+          :label="t('listsPagination')"
+          @update:page="goToPage"
+        />
       </div>
     </div>
 
@@ -510,7 +590,7 @@ onMounted(async () => {
         <div class="flex justify-between gap-4">
           <span class="text-neutral-500">{{ t("createdAt") }}</span>
           <span class="font-mono font-medium">{{
-            new Date(pendingDeleteList.createdAt).toLocaleDateString()
+            formatCreatedAt(pendingDeleteList.createdAt)
           }}</span>
         </div>
       </div>
