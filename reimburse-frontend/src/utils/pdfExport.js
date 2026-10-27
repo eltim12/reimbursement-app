@@ -1,5 +1,5 @@
 // Get pdfmake from window (loaded via CDN in index.html)
-function getPdfMake() {
+export function getPdfMake() {
   if (typeof window !== "undefined" && window.pdfMake) {
     const pdfMake = window.pdfMake;
 
@@ -99,7 +99,7 @@ function triggerPdfDownload(blob, fileName) {
 }
 
 /** Desktop: force file download. Mobile: open viewer with download fallback. */
-function deliverPdf(pdfMake, docDefinition, fileName) {
+export function deliverPdf(pdfMake, docDefinition, fileName) {
   return new Promise((resolve, reject) => {
     try {
       pdfMake.createPdf(docDefinition).getBlob((blob) => {

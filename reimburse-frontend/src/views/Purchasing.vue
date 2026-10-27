@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   ChevronRight,
   Eye,
+  FileDown,
   ListFilter,
   Pencil,
   Plus,
@@ -43,6 +44,7 @@ import {
   translateBilingualZhId,
   translateToLocale,
 } from "@/utils/translator";
+import { exportPurchaseOrderPdf } from "@/utils/purchaseOrderPdf";
 import { getUnitLabel, purchasingUnitItems } from "@/utils/units";
 import { cn } from "@/lib/utils";
 
@@ -666,6 +668,21 @@ const applyDetailStatusToAllItems = () => {
   }
 };
 
+const exportingPoId = ref(null);
+
+const exportPo = async (row) => {
+  if (!row || exportingPoId.value) return;
+  exportingPoId.value = row.id;
+  try {
+    await exportPurchaseOrderPdf(row);
+    showToast(t("pdfExported"));
+  } catch {
+    showToast(t("pdfExportFailed"), "error");
+  } finally {
+    exportingPoId.value = null;
+  }
+};
+
 const openDetail = (row) => {
   detailItem.value = row;
   detailStatus.value =
@@ -1226,11 +1243,22 @@ onMounted(async () => {
                 </p>
               </div>
               <div
-                v-if="canEditRow(row)"
                 class="flex items-center justify-end gap-1 border-t border-neutral-100 pt-2"
                 @click.stop
               >
                 <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-9 w-9"
+                  :aria-label="t('exportPDF')"
+                  :loading="exportingPoId === row.id"
+                  :disabled="exportingPoId !== null && exportingPoId !== row.id"
+                  @click="exportPo(row)"
+                >
+                  <FileDown v-if="exportingPoId !== row.id" class="h-4 w-4" />
+                </Button>
+                <Button
+                  v-if="canEditRow(row)"
                   variant="ghost"
                   size="icon"
                   class="h-9 w-9"
@@ -1240,6 +1268,7 @@ onMounted(async () => {
                   <Pencil class="h-4 w-4" />
                 </Button>
                 <Button
+                  v-if="canEditRow(row)"
                   variant="ghost"
                   size="icon"
                   class="h-9 w-9 text-red-600 hover:text-red-700"
@@ -1383,6 +1412,17 @@ onMounted(async () => {
                 </td>
                 <td class="px-4 py-3" @click.stop>
                   <div class="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-9 w-9"
+                      :aria-label="t('exportPDF')"
+                      :loading="exportingPoId === row.id"
+                      :disabled="exportingPoId !== null && exportingPoId !== row.id"
+                      @click="exportPo(row)"
+                    >
+                      <FileDown v-if="exportingPoId !== row.id" class="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1932,6 +1972,16 @@ onMounted(async () => {
       </div>
 
       <template #actions>
+        <Button
+          variant="outline"
+          class="h-11 w-full sm:w-auto"
+          :loading="exportingPoId === detailItem?.id"
+          :disabled="!detailItem || (exportingPoId !== null && exportingPoId !== detailItem.id)"
+          @click="exportPo(detailItem)"
+        >
+          <FileDown v-if="exportingPoId !== detailItem?.id" class="h-4 w-4" />
+          {{ t("exportPDF") }}
+        </Button>
         <Button
           variant="outline"
           class="h-11 w-full sm:w-auto"
